@@ -1,4 +1,4 @@
-# LibraryForge v1.5
+# StreamSieve v1.5.1
 
 Dispatcharr plugin that generates movie and series `.strm`/NFO libraries. This fork adds an explicit individual-series whitelist while preserving the existing movie generator behavior.
 
@@ -25,12 +25,12 @@ The IDs are Dispatcharr's internal `Series.id` values, not provider `external_se
 
 ## Installation
 
-1. Put `plugin.py` and `plugin.json` inside a folder named `libraryforge`.
+1. Put `plugin.py` and `plugin.json` inside a folder named `streamsieve`.
 2. Zip that folder (keep the folder as the top-level archive entry).
 3. In Dispatcharr → Plugins → Import, upload the zip.
-4. Enable **LibraryForge**.
+4. Enable **StreamSieve**.
 
-The distinct folder name gives this fork the registry key `libraryforge`, so it can be installed alongside the original VOD2MLIB plugin.
+The distinct folder name gives this fork the registry key `streamsieve`, so it can be installed alongside the original VOD2MLIB plugin.
 
 ## Settings
 
