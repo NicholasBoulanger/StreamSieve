@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-07-13T21:57:58Z",
+  "manifest": {
+    "registry_name": "StreamSieve Plugins",
+    "registry_url": "https://github.com/NicholasBoulanger/StreamSieve",
+    "plugins": [
+      {
+        "slug": "streamsieve",
+        "name": "StreamSieve",
+        "description": "Generate Jellyfin-compatible STRM files for selected Dispatcharr VOD series.",
+        "author": "Nicholas Boulanger / shedunraid",
+        "maintainers": [
+          "NicholasBoulanger"
+        ],
+        "license": "MIT",
+        "deprecated": false,
+        "repo_url": "https://github.com/NicholasBoulanger/StreamSieve",
+        "latest_version": "1.5.2",
+        "last_updated": "2026-07-13T21:52:11Z",
+        "latest_url": "https://github.com/NicholasBoulanger/StreamSieve/releases/download/v1.5.2/StreamSieve-v1.5.2.zip",
+        "latest_sha256": "839a9347580841d38a71b1701b37995f9a04baac14621076470285f92bb7a9d8",
+        "latest_size": 11
+      }
+    ]
+  }
+}

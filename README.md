@@ -26,6 +26,18 @@ The IDs are Dispatcharr's internal `Series.id` values, not provider `external_se
 
 ## Installation
 
+### Plugin repository
+
+For managed installation and update detection, add this manifest URL in Dispatcharr's Plugin Hub:
+
+```text
+https://raw.githubusercontent.com/NicholasBoulanger/StreamSieve/main/manifest.json
+```
+
+The regular GitHub repository page is HTML, not a plugin manifest, so paste the raw `manifest.json` URL above. The manifest follows Dispatcharr's current repository schema and points to the verified v1.5.2 release ZIP.
+
+### Manual ZIP import
+
 1. Put `plugin.py` and `plugin.json` inside a folder named `streamsieve`.
 2. Zip that folder (keep the folder as the top-level archive entry).
 3. In Dispatcharr → Plugins → Import, upload the zip.
