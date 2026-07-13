@@ -1,0 +1,107 @@
+{
+  "name": "LibraryForge",
+  "version": "1.4.0",
+  "description": "Generate movie libraries as before, while restricting series generation to explicit Dispatcharr Series IDs.",
+  "author": "Nicholas Boulanger / shedunraid",
+  "fields": [
+    {
+      "id": "root_folder",
+      "label": "Root Folder for Movies",
+      "type": "string",
+      "default": "/VODS/Movies",
+      "help_text": "Path where movie folders will be created"
+    },
+    {
+      "id": "series_root_folder",
+      "label": "Root Folder for Series",
+      "type": "string",
+      "default": "/VODS/Series",
+      "help_text": "Path where series folders will be created"
+    },
+    {
+      "id": "dispatcharr_url",
+      "label": "Dispatcharr URL (IMPORTANT!)",
+      "type": "string",
+      "default": "http://192.168.99.11:9191",
+      "help_text": "Must be accessible from your media server; this URL is written into .strm files."
+    },
+    {
+      "id": "batch_size",
+      "label": "Batch Size (Movies)",
+      "type": "select",
+      "default": "250",
+      "options": [
+        {"value": "10", "label": "10 movies"},
+        {"value": "100", "label": "100 movies"},
+        {"value": "200", "label": "200 movies"},
+        {"value": "500", "label": "500 movies"},
+        {"value": "1000", "label": "1000 movies"},
+        {"value": "all", "label": "All movies"}
+      ],
+      "help_text": "Number of movies to process in this run"
+    },
+    {
+      "id": "generate_nfo",
+      "label": "Generate Movie NFO Files",
+      "type": "boolean",
+      "default": true,
+      "help_text": "Create .nfo metadata files for movies"
+    },
+    {
+      "id": "series_batch_size",
+      "label": "Batch Size (Series)",
+      "type": "select",
+      "default": "10",
+      "options": [
+        {"value": "1", "label": "1 series (testing)"},
+        {"value": "5", "label": "5 series"},
+        {"value": "10", "label": "10 series"},
+        {"value": "25", "label": "25 series"},
+        {"value": "all", "label": "All series (slow!)"}
+      ],
+      "help_text": "Whitelisted series to process (episodes auto-fetched for each)"
+    },
+    {
+      "id": "series_whitelist",
+      "label": "Series Whitelist (Dispatcharr IDs)",
+      "type": "string",
+      "default": "",
+      "placeholder": "12, 34, 56",
+      "help_text": "Comma-separated Dispatcharr Series database IDs. Only these series are eligible; leave blank to process no series."
+    },
+    {
+      "id": "generate_series_nfo",
+      "label": "Generate Series NFO Files",
+      "type": "boolean",
+      "default": true,
+      "help_text": "Create .nfo metadata files for series and episodes"
+    }
+  ],
+  "actions": [
+    {
+      "id": "scan_all_vods",
+      "label": "Scan for VODs to Convert",
+      "description": "Show total movies and series available in Dispatcharr"
+    },
+    {
+      "id": "generate_movies",
+      "label": "Generate Movie .strm Files",
+      "description": "Process movies according to batch size"
+    },
+    {
+      "id": "generate_series",
+      "label": "Generate Series .strm Files",
+      "description": "Generate episodes only for series in the whitelist"
+    },
+    {
+      "id": "cleanup_movies",
+      "label": "Clean Up Movies",
+      "description": "Remove all movie folders and .strm files"
+    },
+    {
+      "id": "cleanup_series",
+      "label": "Clean Up Series",
+      "description": "Remove all series folders and .strm files"
+    }
+  ]
+}

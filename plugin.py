@@ -1,6 +1,6 @@
 """
 VOD .strm Generator Plugin for Dispatcharr
-v1.3.0 - Real concurrent threading for series processing
+v1.4.0 - Individual-series whitelist
 
 MIT License
 Copyright (c) 2025-2026 shedunraid
@@ -14,9 +14,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class Plugin:
     """Generate .strm files for VOD movies from Dispatcharr."""
-    
-    name = "VOD2MLIB"
-    version = "1.3.0"
+
+    name = "LibraryForge"
+    version = "1.4.0"
     description = """• Convert Dispatcharr VODs to media library format (.strm files).        • SETUP: Map a host folder to /VODS in your Dispatcharr container (e.g., /mnt/media:/VODS).        • Configure root folders in plugin settings (/VODS/Movies and /VODS/Series by default).        • USAGE: Click 'Scan for VODs' to see totals.        • Use 'Generate Movie/Series .strm Files' with batch sizes (start small like 10 to test).        • Episodes auto-fetch per series as needed.        • Repeat clicks until complete - smart skip logic prevents duplicates.        • TIMING: Movies are fast (~30 sec per 250).        • Series OPTIMIZED: REAL THREADING! 50-70% faster with 3 parallel workers (10 series: 120s → ~50s)!        • Use batch of 1 for testing.        • NOTE: If you get errors, do a full browser refresh (Ctrl+F5 / Cmd+Shift+R) and try again.        • If you like this plugin please donate: https://paypal.me/shedunraid"""
     
     fields = [
@@ -59,7 +59,7 @@ class Plugin:
         {
             "id": "generate_nfo",
             "label": "Generate Movie NFO Files",
-            "type": "checkbox",
+            "type": "boolean",
             "default": True,
             "help_text": "Create .nfo metadata files for movies"
         },
@@ -78,9 +78,17 @@ class Plugin:
             "help_text": "Series to process (episodes auto-fetched for each)"
         },
         {
+            "id": "series_whitelist",
+            "label": "Series Whitelist (Dispatcharr IDs)",
+            "type": "string",
+            "default": "",
+            "placeholder": "12, 34, 56",
+            "help_text": "Comma-separated Dispatcharr Series database IDs. Only these series are eligible; leave blank to process no series."
+        },
+        {
             "id": "generate_series_nfo",
             "label": "Generate Series NFO Files",
-            "type": "checkbox",
+            "type": "boolean",
             "default": True,
             "help_text": "Create .nfo metadata files for series and episodes"
         }
@@ -381,7 +389,13 @@ class Plugin:
         dispatcharr_url = settings.get("dispatcharr_url", "http://192.168.99.11:9191").rstrip("/")
         batch_size = settings.get("series_batch_size") or "10"
         generate_nfo = settings.get("generate_series_nfo", True)
-        
+        raw_whitelist = settings.get("series_whitelist", "")
+        try:
+            series_whitelist = self._parse_series_whitelist(raw_whitelist)
+        except ValueError as e:
+            logger.error("Invalid series whitelist: %s", e)
+            return {"status": "error", "message": f"Invalid series whitelist: {e}"}
+
         # Validate URL
         if "localhost" in dispatcharr_url.lower() or "127.0.0.1" in dispatcharr_url:
             return {"status": "error", "message": "Dispatcharr URL must be an actual IP address!"}
@@ -391,9 +405,21 @@ class Plugin:
         logger.info("  Series Root: %s", series_root)
         logger.info("  Dispatcharr URL: %s", dispatcharr_url)
         logger.info("  Batch Size: %s", batch_size)
+        logger.info("  Series Whitelist: %s", ", ".join(str(series_id) for series_id in series_whitelist) or "Empty")
         logger.info("  Generate NFO: %s", "Yes" if generate_nfo else "No")
         logger.info("  Threading: ENABLED (3 workers)")
         logger.info("")
+
+        if not series_whitelist:
+            logger.warning("Series whitelist is empty; no series will be processed.")
+            return {
+                "status": "ok",
+                "message": "Series whitelist is empty; no series were processed",
+                "series_processed": 0,
+                "episodes_created": 0,
+                "nfo_created": 0,
+                "errors": 0
+            }
         
         try:
             from apps.vod.models import M3USeriesRelation
@@ -403,12 +429,24 @@ class Plugin:
         
         # Get series
         try:
-            query = M3USeriesRelation.objects.select_related('series', 'm3u_account', 'category')
+            # Apply the whitelist before counting or slicing so batching only sees
+            # explicitly selected Dispatcharr Series records.
+            query = M3USeriesRelation.objects.select_related(
+                'series', 'm3u_account', 'category'
+            ).filter(series_id__in=series_whitelist)
             total_count = query.count()
-            
+
+            matched_ids = set(query.values_list('series_id', flat=True).distinct())
+            missing_ids = [series_id for series_id in series_whitelist if series_id not in matched_ids]
+            if missing_ids:
+                logger.warning(
+                    "Whitelist IDs not found in Dispatcharr: %s",
+                    ", ".join(str(series_id) for series_id in missing_ids)
+                )
+
             if batch_size == "all":
                 series_relations = list(query)
-                logger.info("Processing ALL %d series", total_count)
+                logger.info("Processing ALL %d whitelisted series relations", total_count)
                 target_batch = total_count
             else:
                 target_batch = int(batch_size)
@@ -418,7 +456,14 @@ class Plugin:
                 logger.info("Fetching %d series to process batch of %d", fetch_size, target_batch)
             
             if not series_relations:
-                return {"status": "ok", "message": "No series found"}
+                return {
+                    "status": "ok",
+                    "message": "No Dispatcharr series matched the whitelist",
+                    "series_processed": 0,
+                    "episodes_created": 0,
+                    "nfo_created": 0,
+                    "errors": 0
+                }
             
             logger.info("Found %d series to process", len(series_relations))
             logger.info("")
@@ -522,7 +567,37 @@ class Plugin:
             "nfo_created": created_nfo if generate_nfo else 0,
             "errors": errors
         }
-    
+
+    def _parse_series_whitelist(self, value) -> list:
+        """Parse comma-separated Dispatcharr Series primary keys."""
+        if value is None:
+            return []
+
+        if isinstance(value, (list, tuple, set)):
+            tokens = [str(item).strip() for item in value]
+        else:
+            tokens = [token.strip() for token in str(value).split(',')]
+
+        series_ids = []
+        invalid_tokens = []
+        for token in tokens:
+            if not token:
+                continue
+            if not token.isdigit() or int(token) <= 0:
+                invalid_tokens.append(token)
+                continue
+            series_id = int(token)
+            if series_id not in series_ids:
+                series_ids.append(series_id)
+
+        if invalid_tokens:
+            raise ValueError(
+                "IDs must be positive whole numbers; invalid value(s): "
+                + ", ".join(invalid_tokens)
+            )
+
+        return series_ids
+
     def _process_single_series(self, series_rel, dispatcharr_url, generate_nfo, series_root, logger):
         """Process a single series - fetches episodes and creates files (thread-safe)."""
         from apps.vod.models import M3UEpisodeRelation

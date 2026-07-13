@@ -1,6 +1,18 @@
-# VOD .strm Generator v1.3
+# LibraryForge v1.4
 
-Simple extension of v0.1 with configurable batch sizes.
+Dispatcharr plugin that generates movie and series `.strm`/NFO libraries. This fork adds an explicit individual-series whitelist while preserving the existing movie generator behavior.
+
+## Series whitelist
+
+Series generation is restricted to the Dispatcharr Series database IDs entered in **Series Whitelist (Dispatcharr IDs)**.
+
+- Enter IDs separated by commas, for example: `12, 34, 56`.
+- Spaces and duplicate IDs are accepted.
+- A blank whitelist processes no series.
+- Invalid values are rejected instead of being silently ignored.
+- The series batch size is applied after the whitelist filter.
+
+The IDs are Dispatcharr's internal `Series.id` values, not provider `external_series_id`, TMDB IDs, or IMDb IDs. They can be obtained from Dispatcharr's VOD series API/database. Dispatcharr's plugin setting schema currently has no database-backed searchable selector, so this fork uses its supported string field.
 
 ## What's New in v1.1
 
@@ -10,15 +22,20 @@ Simple extension of v0.1 with configurable batch sizes.
 
 ## Installation
 
-1. Zip the `plugin.py` file.
-2. In Dispatcharr → Plugins → Import
-3. Enable the plugin
+1. Put `plugin.py` and `plugin.json` inside a folder named `libraryforge`.
+2. Zip that folder (keep the folder as the top-level archive entry).
+3. In Dispatcharr → Plugins → Import, upload the zip.
+4. Enable **LibraryForge**.
+
+The distinct folder name gives this fork the registry key `libraryforge`, so it can be installed alongside the original VOD2MLIB plugin.
 
 ## Settings
 
 - **Root Folder**: Where to create movie folders (e.g., `/data/movies`)
 - **Dispatcharr URL**: Your actual IP (e.g., `http://192.168.99.11:9191`) - NOT localhost!
 - **Batch Size**: How many movies to process (10, 50, 100, 200, 500, or All)
+- **Series Whitelist**: Comma-separated Dispatcharr `Series.id` values; blank means no series
+- **Series Batch Size**: How many whitelisted series relations to process per run
 
 ## Usage
 
