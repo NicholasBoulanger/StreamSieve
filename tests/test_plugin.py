@@ -89,12 +89,20 @@ class PluginTests(unittest.TestCase):
             SimpleNamespace(episode=new_episode, stream_id="new-stream"),
         ]
 
+        query_calls = {}
+
         class EpisodeQuery(list):
             def select_related(self, *args):
+                query_calls["select_related"] = args
+                return self
+
+            def order_by(self, *fields):
+                query_calls["order_by"] = fields
                 return self
 
         class EpisodeManager:
             def filter(self, **kwargs):
+                query_calls["filter"] = kwargs
                 return EpisodeQuery(episode_relations)
 
         refresh_calls = []
@@ -130,6 +138,15 @@ class PluginTests(unittest.TestCase):
 
             self.assertEqual(result["episodes"], 1)
             self.assertEqual(len(refresh_calls), 1)
+            self.assertEqual(query_calls["filter"], {
+                "m3u_account": relation.m3u_account,
+                "episode__series_id": series.id,
+            })
+            self.assertEqual(query_calls["select_related"], ("episode",))
+            self.assertEqual(query_calls["order_by"], (
+                "episode__season_number",
+                "episode__episode_number",
+            ))
             with open(existing_path, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "keep-me")
             self.assertTrue(os.path.exists(os.path.join(

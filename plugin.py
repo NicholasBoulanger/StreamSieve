@@ -1,6 +1,6 @@
 """
 VOD .strm Generator Plugin for Dispatcharr
-v1.5.1 - StreamSieve rename
+v1.5.2 - SQL-filtered episode loading
 
 MIT License
 Copyright (c) 2025-2026 shedunraid
@@ -16,7 +16,7 @@ class Plugin:
     """Generate .strm files for VOD movies from Dispatcharr."""
 
     name = "StreamSieve"
-    version = "1.5.1"
+    version = "1.5.2"
     description = """• Convert Dispatcharr VODs to media library format (.strm files).        • SETUP: Map a host folder to /VODS in your Dispatcharr container (e.g., /mnt/media:/VODS).        • Configure root folders in plugin settings (/VODS/Movies and /VODS/Series by default).        • USAGE: Click 'Scan for VODs' to see totals.        • Use 'Generate Movie/Series .strm Files' with batch sizes (start small like 10 to test).        • Episodes auto-fetch per series as needed.        • Repeat clicks until complete - smart skip logic prevents duplicates.        • TIMING: Movies are fast (~30 sec per 250).        • Series OPTIMIZED: REAL THREADING! 50-70% faster with 3 parallel workers (10 series: 120s → ~50s)!        • Use batch of 1 for testing.        • NOTE: If you get errors, do a full browser refresh (Ctrl+F5 / Cmd+Shift+R) and try again.        • If you like this plugin please donate: https://paypal.me/shedunraid"""
     
     fields = [
@@ -647,16 +647,20 @@ class Plugin:
                 external_series_id=series_rel.external_series_id
             )
             
-            # Get episodes for this series
-            episodes = M3UEpisodeRelation.objects.filter(
-                m3u_account=series_rel.m3u_account
-            ).select_related('episode')
-            
-            # Filter to only episodes belonging to this series
-            episodes = [ep for ep in episodes if ep.episode.series and ep.episode.series.id == series.id]
-            
-            # Sort by season and episode number
-            episodes = sorted(episodes, key=lambda ep: (ep.episode.season_number or 0, ep.episode.episode_number or 0))
+            # Keep filtering and ordering in SQL so large provider catalogs do not
+            # load every episode relation into Python for each selected series.
+            episodes = (
+                M3UEpisodeRelation.objects
+                .filter(
+                    m3u_account=series_rel.m3u_account,
+                    episode__series_id=series.id,
+                )
+                .select_related("episode")
+                .order_by(
+                    "episode__season_number",
+                    "episode__episode_number",
+                )
+            )
             
             episode_count = len(episodes)
             

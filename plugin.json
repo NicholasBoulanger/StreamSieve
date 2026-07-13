@@ -1,6 +1,6 @@
 {
   "name": "StreamSieve",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Generate movie libraries as before, while restricting series generation to explicit Dispatcharr Series IDs.",
   "author": "Nicholas Boulanger / shedunraid",
   "fields": [

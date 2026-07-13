@@ -1,4 +1,4 @@
-# StreamSieve v1.5.1
+# StreamSieve v1.5.2
 
 Dispatcharr plugin that generates movie and series `.strm`/NFO libraries. This fork adds an explicit individual-series whitelist while preserving the existing movie generator behavior.
 
@@ -13,6 +13,7 @@ Series generation is restricted to the Dispatcharr Series database IDs entered i
 - The series batch size is applied after the whitelist filter.
 - Multiple provider relations are deduplicated by `series_id`; the lowest relation ID is selected consistently.
 - Reruns refresh each selected series and add only episode files that are missing.
+- Episode relations are filtered and ordered in SQL for efficient large catalogs.
 - **Clean Up Whitelisted Series** deletes only folders corresponding to the current whitelist.
 
 The IDs are Dispatcharr's internal `Series.id` values, not provider `external_series_id`, TMDB IDs, or IMDb IDs. They can be obtained from Dispatcharr's VOD series API/database. Dispatcharr's plugin setting schema currently has no database-backed searchable selector, so this fork uses its supported string field.
