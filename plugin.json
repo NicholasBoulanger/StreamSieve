@@ -1,6 +1,6 @@
 {
   "name": "LibraryForge",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Generate movie libraries as before, while restricting series generation to explicit Dispatcharr Series IDs.",
   "author": "Nicholas Boulanger / shedunraid",
   "fields": [
@@ -59,7 +59,7 @@
         {"value": "25", "label": "25 series"},
         {"value": "all", "label": "All series (slow!)"}
       ],
-      "help_text": "Whitelisted series to process (episodes auto-fetched for each)"
+      "help_text": "Unique whitelisted series to refresh and process in this run"
     },
     {
       "id": "series_whitelist",
@@ -100,8 +100,8 @@
     },
     {
       "id": "cleanup_series",
-      "label": "Clean Up Series",
-      "description": "Remove all series folders and .strm files"
+      "label": "Clean Up Whitelisted Series",
+      "description": "Remove folders only for series currently in the whitelist"
     }
   ]
 }

@@ -1,6 +1,6 @@
 """
 VOD .strm Generator Plugin for Dispatcharr
-v1.4.0 - Individual-series whitelist
+v1.5.0 - Incremental, deduplicated series processing
 
 MIT License
 Copyright (c) 2025-2026 shedunraid
@@ -16,7 +16,7 @@ class Plugin:
     """Generate .strm files for VOD movies from Dispatcharr."""
 
     name = "LibraryForge"
-    version = "1.4.0"
+    version = "1.5.0"
     description = """• Convert Dispatcharr VODs to media library format (.strm files).        • SETUP: Map a host folder to /VODS in your Dispatcharr container (e.g., /mnt/media:/VODS).        • Configure root folders in plugin settings (/VODS/Movies and /VODS/Series by default).        • USAGE: Click 'Scan for VODs' to see totals.        • Use 'Generate Movie/Series .strm Files' with batch sizes (start small like 10 to test).        • Episodes auto-fetch per series as needed.        • Repeat clicks until complete - smart skip logic prevents duplicates.        • TIMING: Movies are fast (~30 sec per 250).        • Series OPTIMIZED: REAL THREADING! 50-70% faster with 3 parallel workers (10 series: 120s → ~50s)!        • Use batch of 1 for testing.        • NOTE: If you get errors, do a full browser refresh (Ctrl+F5 / Cmd+Shift+R) and try again.        • If you like this plugin please donate: https://paypal.me/shedunraid"""
     
     fields = [
@@ -75,7 +75,7 @@ class Plugin:
                 {"value": "25", "label": "25 series"},
                 {"value": "all", "label": "All series (slow!)"}
             ],
-            "help_text": "Series to process (episodes auto-fetched for each)"
+            "help_text": "Unique whitelisted series to refresh and process in this run"
         },
         {
             "id": "series_whitelist",
@@ -117,8 +117,8 @@ class Plugin:
         },
         {
             "id": "cleanup_series",
-            "label": "Clean Up Series",
-            "description": "⚠️ Remove all series folders and .strm files"
+            "label": "Clean Up Whitelisted Series",
+            "description": "⚠️ Remove folders only for series currently in the whitelist"
         }
     ]
     
@@ -433,11 +433,10 @@ class Plugin:
             # explicitly selected Dispatcharr Series records.
             query = M3USeriesRelation.objects.select_related(
                 'series', 'm3u_account', 'category'
-            ).filter(series_id__in=series_whitelist)
-            total_count = query.count()
-
-            matched_ids = set(query.values_list('series_id', flat=True).distinct())
-            missing_ids = [series_id for series_id in series_whitelist if series_id not in matched_ids]
+            )
+            series_relations, missing_ids, total_count = self._select_series_relations(
+                query, series_whitelist, batch_size
+            )
             if missing_ids:
                 logger.warning(
                     "Whitelist IDs not found in Dispatcharr: %s",
@@ -445,15 +444,12 @@ class Plugin:
                 )
 
             if batch_size == "all":
-                series_relations = list(query)
-                logger.info("Processing ALL %d whitelisted series relations", total_count)
-                target_batch = total_count
+                logger.info("Processing ALL %d unique whitelisted series", total_count)
             else:
-                target_batch = int(batch_size)
-                # Fetch enough to account for skips
-                fetch_size = min(target_batch * 3, total_count)
-                series_relations = list(query[:fetch_size])
-                logger.info("Fetching %d series to process batch of %d", fetch_size, target_batch)
+                logger.info(
+                    "Processing %d of %d unique whitelisted series",
+                    len(series_relations), total_count
+                )
             
             if not series_relations:
                 return {
@@ -481,8 +477,8 @@ class Plugin:
         created_strm = 0
         created_nfo = 0
         errors = 0
-        series_created = 0
-        skipped = 0
+        series_processed = 0
+        unchanged = 0
         
         logger.info("Processing series with 3 parallel workers:")
         logger.info("-" * 60)
@@ -494,10 +490,6 @@ class Plugin:
             submitted = 0
             
             for series_rel in series_relations:
-                # Stop submitting if we already have enough created
-                if batch_size != "all" and series_created >= target_batch:
-                    break
-                
                 # Submit the processing task
                 future = executor.submit(
                     self._process_single_series,
@@ -520,25 +512,22 @@ class Plugin:
                 try:
                     result = future.result()
                     
-                    if result.get("skipped"):
-                        skipped += 1
-                        logger.info("[%d/%d] %s", idx, submitted, result["message"])
-                    elif result.get("created"):
-                        series_created += 1
+                    if "error" in result:
+                        errors += 1
+                    else:
+                        series_processed += 1
+
+                    if result.get("created"):
                         created_strm += result["episodes"]
                         created_nfo += result["nfo_files"]
+                        logger.info("[%d/%d] %s", idx, submitted, result["message"])
+                    elif result.get("skipped"):
+                        unchanged += 1
+                        created_nfo += result.get("nfo_files", 0)
                         logger.info("[%d/%d] %s", idx, submitted, result["message"])
                     else:
                         # No episodes or other issue
                         logger.info("[%d/%d] %s", idx, submitted, result["message"])
-                    
-                    if "error" in result:
-                        errors += 1
-                    
-                    # Stop if we've created enough
-                    if batch_size != "all" and series_created >= target_batch:
-                        logger.info("")
-                        logger.info("Batch target reached! Waiting for in-progress tasks...")
                         
                 except Exception as e:
                     logger.error("[%d/%d] Error processing series: %s", idx, submitted, e)
@@ -547,22 +536,22 @@ class Plugin:
         logger.info("")
         logger.info("=" * 60)
         logger.info("SUMMARY:")
-        logger.info("  Series created: %d", series_created)
-        logger.info("  Series skipped: %d", skipped)
-        logger.info("  Episodes created: %d", created_strm)
+        logger.info("  Series processed: %d", series_processed)
+        logger.info("  Series already current: %d", unchanged)
+        logger.info("  New episodes created: %d", created_strm)
         if generate_nfo:
             logger.info("  NFO files created: %d", created_nfo)
         logger.info("  Errors: %d", errors)
         logger.info("=" * 60)
         
-        summary_msg = f"Created {series_created} series with {created_strm} episodes"
+        summary_msg = f"Processed {series_processed} series; added {created_strm} new episodes"
         if generate_nfo:
             summary_msg += f" + {created_nfo} NFO files"
         
         return {
             "status": "ok",
             "message": summary_msg,
-            "series_processed": series_created,
+            "series_processed": series_processed,
             "episodes_created": created_strm,
             "nfo_created": created_nfo if generate_nfo else 0,
             "errors": errors
@@ -598,6 +587,44 @@ class Plugin:
 
         return series_ids
 
+    def _select_series_relations(self, query, series_whitelist, batch_size):
+        """Filter, deterministically deduplicate, and batch series relations."""
+        filtered_query = query.filter(
+            series_id__in=series_whitelist
+        ).order_by('series_id', 'id')
+
+        relation_by_series_id = {}
+        for relation in filtered_query:
+            relation_by_series_id.setdefault(relation.series_id, relation)
+
+        missing_ids = [
+            series_id for series_id in series_whitelist
+            if series_id not in relation_by_series_id
+        ]
+        relations = [
+            relation_by_series_id[series_id]
+            for series_id in series_whitelist
+            if series_id in relation_by_series_id
+        ]
+        total_count = len(relations)
+
+        if batch_size != "all":
+            target_batch = int(batch_size)
+            if target_batch <= 0:
+                raise ValueError("Series batch size must be positive")
+            relations = relations[:target_batch]
+
+        return relations, missing_ids, total_count
+
+    def _series_folder_name(self, series) -> str:
+        """Build the on-disk folder name shared by generation and cleanup."""
+        raw_name = series.name or f"Unknown Series {series.id}"
+        series_name = self._clean_title(raw_name)
+        sanitized_name = self._sanitize_filename(series_name)
+        if series.year:
+            return f"{sanitized_name} ({series.year})"
+        return sanitized_name
+
     def _process_single_series(self, series_rel, dispatcharr_url, generate_nfo, series_root, logger):
         """Process a single series - fetches episodes and creates files (thread-safe)."""
         from apps.vod.models import M3UEpisodeRelation
@@ -608,43 +635,17 @@ class Plugin:
         # Clean series name
         raw_name = series.name or f"Unknown Series {series.id}"
         series_name = self._clean_title(raw_name)
-        year = series.year
-        
-        if year:
-            series_folder_name = f"{self._sanitize_filename(series_name)} ({year})"
-        else:
-            series_folder_name = self._sanitize_filename(series_name)
+        series_folder_name = self._series_folder_name(series)
         
         series_folder = os.path.join(series_root, series_folder_name)
         
-        # Check if already processed (has Season folders with content)
-        if os.path.exists(series_folder):
-            try:
-                has_seasons = any(
-                    item.startswith("Season") and os.path.isdir(os.path.join(series_folder, item))
-                    for item in os.listdir(series_folder)
-                )
-                if has_seasons:
-                    return {
-                        "created": False,
-                        "skipped": True,
-                        "series_name": series_name,
-                        "episodes": 0,
-                        "nfo_files": 0,
-                        "message": f"{series_name} - Already processed"
-                    }
-            except:
-                pass  # If error checking, process anyway
-        
         try:
-            # Fetch episodes for this series
-            custom_props = series_rel.custom_properties or {}
-            if not custom_props.get('episodes_fetched', False):
-                refresh_series_episodes(
-                    account=series_rel.m3u_account,
-                    series=series_rel.series,
-                    external_series_id=series_rel.external_series_id
-                )
+            # Always refresh so reruns discover episodes added by the provider.
+            refresh_series_episodes(
+                account=series_rel.m3u_account,
+                series=series_rel.series,
+                external_series_id=series_rel.external_series_id
+            )
             
             # Get episodes for this series
             episodes = M3UEpisodeRelation.objects.filter(
@@ -673,15 +674,18 @@ class Plugin:
             os.makedirs(series_folder, exist_ok=True)
             
             nfo_count = 0
+            created_episode_count = 0
             
             # Generate tvshow.nfo if enabled
             if generate_nfo:
                 tvshow_nfo_path = os.path.join(series_folder, "tvshow.nfo")
+                tvshow_nfo_exists = os.path.exists(tvshow_nfo_path)
                 category_name = series_rel.category.name if series_rel.category else ""
                 tvshow_content = self._generate_tvshow_nfo(series, category_name)
                 with open(tvshow_nfo_path, 'w', encoding='utf-8') as f:
                     f.write(tvshow_content)
-                nfo_count += 1
+                if not tvshow_nfo_exists:
+                    nfo_count += 1
             
             # Process episodes by season
             for episode_rel in episodes:
@@ -707,25 +711,33 @@ class Plugin:
                 # Create .strm file
                 strm_path = os.path.join(season_folder, f"{filename}.strm")
                 proxy_url = f"{dispatcharr_url}/proxy/vod/episode/{episode.uuid}?stream_id={episode_rel.stream_id}"
-                
-                with open(strm_path, 'w', encoding='utf-8') as f:
-                    f.write(proxy_url)
+
+                if not os.path.exists(strm_path):
+                    with open(strm_path, 'w', encoding='utf-8') as f:
+                        f.write(proxy_url)
+                    created_episode_count += 1
                 
                 # Create episode .nfo if enabled
                 if generate_nfo:
                     nfo_path = os.path.join(season_folder, f"{filename}.nfo")
-                    episode_nfo_content = self._generate_episode_nfo(episode)
-                    with open(nfo_path, 'w', encoding='utf-8') as f:
-                        f.write(episode_nfo_content)
-                    nfo_count += 1
+                    if not os.path.exists(nfo_path):
+                        episode_nfo_content = self._generate_episode_nfo(episode)
+                        with open(nfo_path, 'w', encoding='utf-8') as f:
+                            f.write(episode_nfo_content)
+                        nfo_count += 1
             
             return {
-                "created": True,
-                "skipped": False,
+                "created": created_episode_count > 0,
+                "skipped": created_episode_count == 0,
                 "series_name": series_name,
-                "episodes": episode_count,
+                "episodes": created_episode_count,
                 "nfo_files": nfo_count,
-                "message": f"{series_name} - ✓ Created {episode_count} episodes"
+                "message": (
+                    f"{series_name} - ✓ Added {created_episode_count} new episodes "
+                    f"({episode_count} available)"
+                    if created_episode_count
+                    else f"{series_name} - Up to date ({episode_count} episodes)"
+                )
             }
             
         except Exception as e:
@@ -874,109 +886,121 @@ class Plugin:
             }
     
     def _cleanup_series(self, settings: Dict[str, Any], logger):
-        """Clean up all generated series .strm files and folders."""
+        """Clean up generated folders for currently whitelisted series only."""
         series_root = settings.get("series_root_folder", "/VODS/Series")
-        
+        try:
+            series_whitelist = self._parse_series_whitelist(
+                settings.get("series_whitelist", "")
+            )
+        except ValueError as e:
+            logger.error("Invalid series whitelist: %s", e)
+            return {"status": "error", "message": f"Invalid series whitelist: {e}"}
+
         logger.info("=" * 60)
-        logger.info("Series Cleanup")
+        logger.info("Whitelisted Series Cleanup")
         logger.info("=" * 60)
         logger.info("")
-        logger.info("⚠️  WARNING: This will delete ALL series folders!")
+        logger.info("⚠️  WARNING: This deletes folders for whitelisted series only.")
         logger.info("Series Root: %s", series_root)
+        logger.info(
+            "Series Whitelist: %s",
+            ", ".join(str(series_id) for series_id in series_whitelist) or "Empty"
+        )
         logger.info("")
-        
+
+        if not series_whitelist:
+            logger.warning("Series whitelist is empty; nothing will be deleted.")
+            return {
+                "status": "ok",
+                "message": "Series whitelist is empty; nothing was deleted",
+                "deleted": 0,
+                "errors": 0
+            }
+
         if not os.path.exists(series_root):
             logger.info("Series root doesn't exist. Nothing to clean up.")
             return {"status": "ok", "message": "Series root doesn't exist", "deleted": 0}
-        
-        # Scan for series folders (they contain Season folders)
-        logger.info("Scanning for series folders...")
+
         folders_to_delete = []
         strm_count = 0
         nfo_count = 0
-        
+
         try:
             import shutil
-            
-            for item in os.listdir(series_root):
-                item_path = os.path.join(series_root, item)
-                
-                if os.path.isdir(item_path):
-                    # Check if has Season folders or .strm files
-                    has_series_content = False
-                    
-                    for subitem in os.listdir(item_path):
-                        subitem_path = os.path.join(item_path, subitem)
-                        
-                        # Check for Season folders
-                        if os.path.isdir(subitem_path) and subitem.startswith("Season"):
-                            has_series_content = True
-                            # Count files in season folder
-                            for file in os.listdir(subitem_path):
-                                if file.endswith('.strm'):
-                                    strm_count += 1
-                                elif file.endswith('.nfo'):
-                                    nfo_count += 1
-                        
-                        # Count tvshow.nfo
-                        if subitem == "tvshow.nfo":
-                            nfo_count += 1
-                    
-                    if has_series_content:
-                        folders_to_delete.append(item_path)
-            
-            logger.info("Found %d series folders", len(folders_to_delete))
+            from apps.vod.models import Series
+
+            whitelisted_series = Series.objects.filter(id__in=series_whitelist)
+            expected_folders = {
+                os.path.join(series_root, self._series_folder_name(series))
+                for series in whitelisted_series
+            }
+
+            for folder_path in sorted(expected_folders):
+                if not os.path.isdir(folder_path):
+                    continue
+
+                has_series_content = False
+                for root, dirs, files in os.walk(folder_path):
+                    if os.path.basename(root).startswith("Season"):
+                        has_series_content = True
+                    strm_count += sum(1 for filename in files if filename.endswith('.strm'))
+                    nfo_count += sum(1 for filename in files if filename.endswith('.nfo'))
+
+                if has_series_content:
+                    folders_to_delete.append(folder_path)
+
+            logger.info("Found %d whitelisted series folders", len(folders_to_delete))
             logger.info("  .strm files: ~%d", strm_count)
             logger.info("  .nfo files: ~%d", nfo_count)
             logger.info("")
-            
+
             if len(folders_to_delete) == 0:
-                logger.info("No series folders found. Nothing to delete.")
-                return {"status": "ok", "message": "No series found", "deleted": 0}
-            
+                logger.info("No whitelisted series folders found. Nothing to delete.")
+                return {"status": "ok", "message": "No whitelisted series folders found", "deleted": 0}
+
             # Show first 10
-            logger.info("Series to be deleted:")
+            logger.info("Whitelisted series to be deleted:")
             logger.info("-" * 60)
             for idx, folder in enumerate(folders_to_delete[:10], 1):
                 logger.info("  [%d] %s", idx, os.path.basename(folder))
-            
+
             if len(folders_to_delete) > 10:
                 logger.info("  ... and %d more", len(folders_to_delete) - 10)
-            
+
             logger.info("")
             logger.info("Proceeding with deletion...")
             logger.info("")
-            
+
             # Delete series folders
             deleted = 0
             errors = 0
-            
+
             for idx, folder_path in enumerate(folders_to_delete, 1):
                 try:
                     shutil.rmtree(folder_path)
                     deleted += 1
-                    
+
                     if idx % 10 == 0 or idx == len(folders_to_delete):
                         logger.info("Progress: %d/%d deleted", idx, len(folders_to_delete))
-                
+
                 except Exception as e:
                     logger.error("Failed to delete %s: %s", folder_path, e)
                     errors += 1
-            
+
             logger.info("")
             logger.info("=" * 60)
             logger.info("CLEANUP SUMMARY:")
-            logger.info("  Series deleted: %d", deleted)
+            logger.info("  Whitelisted series deleted: %d", deleted)
             logger.info("  Errors: %d", errors)
             logger.info("=" * 60)
-            
+
             return {
                 "status": "ok",
-                "message": f"Deleted {deleted} series folders",
+                "message": f"Deleted {deleted} whitelisted series folders",
                 "deleted": deleted,
                 "errors": errors
             }
-            
+
         except Exception as e:
             logger.error("Cleanup failed: %s", e)
             return {"status": "error", "message": f"Cleanup error: {e}"}

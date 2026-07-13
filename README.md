@@ -1,4 +1,4 @@
-# LibraryForge v1.4
+# LibraryForge v1.5
 
 Dispatcharr plugin that generates movie and series `.strm`/NFO libraries. This fork adds an explicit individual-series whitelist while preserving the existing movie generator behavior.
 
@@ -11,6 +11,9 @@ Series generation is restricted to the Dispatcharr Series database IDs entered i
 - A blank whitelist processes no series.
 - Invalid values are rejected instead of being silently ignored.
 - The series batch size is applied after the whitelist filter.
+- Multiple provider relations are deduplicated by `series_id`; the lowest relation ID is selected consistently.
+- Reruns refresh each selected series and add only episode files that are missing.
+- **Clean Up Whitelisted Series** deletes only folders corresponding to the current whitelist.
 
 The IDs are Dispatcharr's internal `Series.id` values, not provider `external_series_id`, TMDB IDs, or IMDb IDs. They can be obtained from Dispatcharr's VOD series API/database. Dispatcharr's plugin setting schema currently has no database-backed searchable selector, so this fork uses its supported string field.
 
@@ -35,7 +38,8 @@ The distinct folder name gives this fork the registry key `libraryforge`, so it 
 - **Dispatcharr URL**: Your actual IP (e.g., `http://192.168.99.11:9191`) - NOT localhost!
 - **Batch Size**: How many movies to process (10, 50, 100, 200, 500, or All)
 - **Series Whitelist**: Comma-separated Dispatcharr `Series.id` values; blank means no series
-- **Series Batch Size**: How many whitelisted series relations to process per run
+- **Series Batch Size**: How many unique whitelisted series to refresh per run
+- **Series Cleanup**: Removes generated folders only for IDs in the current whitelist
 
 ## Usage
 
@@ -130,11 +134,10 @@ Based on working v0.1 code with minimal additions:
 
 ## Next Steps
 
-Once this works perfectly:
+Possible future improvements:
 - Add genre organization
-- Add incremental processing (skip existing)
 - Add progress notifications
-- Add more features
+- Add a searchable selector if Dispatcharr adds support for dynamic plugin fields
 
 But for now - keep it simple!
 
