@@ -1,7 +1,7 @@
 {
   "name": "StreamSieve",
-  "version": "1.5.2",
-  "description": "Generate movie libraries as before, while restricting series generation to explicit Dispatcharr Series IDs.",
+  "version": "1.6.0",
+  "description": "Safely reconcile owned STRM/NFO files with stable paths, previews, and recoverable cleanup.",
   "author": "Nicholas Boulanger / shedunraid",
   "fields": [
     {
@@ -29,14 +29,32 @@
       "id": "batch_size",
       "label": "Batch Size (Movies)",
       "type": "select",
-      "default": "250",
+      "default": "100",
       "options": [
-        {"value": "10", "label": "10 movies"},
-        {"value": "100", "label": "100 movies"},
-        {"value": "200", "label": "200 movies"},
-        {"value": "500", "label": "500 movies"},
-        {"value": "1000", "label": "1000 movies"},
-        {"value": "all", "label": "All movies"}
+        {
+          "value": "10",
+          "label": "10 movies"
+        },
+        {
+          "value": "100",
+          "label": "100 movies"
+        },
+        {
+          "value": "200",
+          "label": "200 movies"
+        },
+        {
+          "value": "500",
+          "label": "500 movies"
+        },
+        {
+          "value": "1000",
+          "label": "1000 movies"
+        },
+        {
+          "value": "all",
+          "label": "All movies"
+        }
       ],
       "help_text": "Number of movies to process in this run"
     },
@@ -53,11 +71,26 @@
       "type": "select",
       "default": "10",
       "options": [
-        {"value": "1", "label": "1 series (testing)"},
-        {"value": "5", "label": "5 series"},
-        {"value": "10", "label": "10 series"},
-        {"value": "25", "label": "25 series"},
-        {"value": "all", "label": "All series (slow!)"}
+        {
+          "value": "1",
+          "label": "1 series (testing)"
+        },
+        {
+          "value": "5",
+          "label": "5 series"
+        },
+        {
+          "value": "10",
+          "label": "10 series"
+        },
+        {
+          "value": "25",
+          "label": "25 series"
+        },
+        {
+          "value": "all",
+          "label": "All series (slow!)"
+        }
       ],
       "help_text": "Unique whitelisted series to refresh and process in this run"
     },
@@ -75,33 +108,100 @@
       "type": "boolean",
       "default": true,
       "help_text": "Create .nfo metadata files for series and episodes"
+    },
+    {
+      "id": "account_priority",
+      "label": "Account priority (Dispatcharr IDs)",
+      "type": "string",
+      "default": "",
+      "help_text": "Comma-separated account IDs, highest preference first. Other eligible accounts follow by relation ID."
     }
   ],
   "actions": [
     {
       "id": "scan_all_vods",
-      "label": "Scan for VODs to Convert",
-      "description": "Show total movies and series available in Dispatcharr"
+      "label": "Scan VOD catalog",
+      "description": "Show available movies and series"
     },
     {
-      "id": "generate_movies",
-      "label": "Generate Movie .strm Files",
-      "description": "Process movies according to batch size"
+      "id": "initialize_series",
+      "label": "Initialize (series)",
+      "description": "Create ownership state for an existing mounted root; leaves media untouched"
+    },
+    {
+      "id": "preview_series",
+      "label": "Preview (series)",
+      "description": "Read-only preview using the current Dispatcharr catalog; no provider refresh"
+    },
+    {
+      "id": "adopt_series",
+      "label": "Adopt matching legacy STRMs (series)",
+      "description": "Claim unambiguous existing Dispatcharr proxy UUIDs and preserve legacy paths; NFOs remain unmanaged"
     },
     {
       "id": "generate_series",
-      "label": "Generate Series .strm Files",
-      "description": "Generate episodes only for series in the whitelist"
-    },
-    {
-      "id": "cleanup_movies",
-      "label": "Clean Up Movies",
-      "description": "Remove all movie folders and .strm files"
+      "label": "Synchronize (series)",
+      "description": "Create missing files and update owned files; no automatic deletion"
     },
     {
       "id": "cleanup_series",
-      "label": "Clean Up Whitelisted Series",
-      "description": "Remove folders only for series currently in the whitelist"
+      "label": "Retire owned files (series)",
+      "description": "Copy verified owned files to sibling state/recovery storage, then remove them; series limited to current whitelist"
+    },
+    {
+      "id": "initialize_movies",
+      "label": "Initialize (movies)",
+      "description": "Create ownership state for an existing mounted root; leaves media untouched"
+    },
+    {
+      "id": "preview_movies",
+      "label": "Preview (movies)",
+      "description": "Read-only preview using the current Dispatcharr catalog; no provider refresh"
+    },
+    {
+      "id": "adopt_movies",
+      "label": "Adopt matching legacy STRMs (movies)",
+      "description": "Claim unambiguous existing Dispatcharr proxy UUIDs and preserve legacy paths; NFOs remain unmanaged"
+    },
+    {
+      "id": "generate_movies",
+      "label": "Synchronize (movies)",
+      "description": "Create missing files and update owned files; no automatic deletion"
+    },
+    {
+      "id": "cleanup_movies",
+      "label": "Retire owned files (movies)",
+      "description": "Copy verified owned files to sibling state/recovery storage, then remove them; series limited to current whitelist"
+    },
+    {
+      "id": "preview_adopt_series",
+      "label": "Preview adoption (series)",
+      "description": "Read-only report of matching legacy STRMs eligible for ownership"
+    },
+    {
+      "id": "preview_adopt_movies",
+      "label": "Preview adoption (movies)",
+      "description": "Read-only report of matching legacy STRMs eligible for ownership"
+    },
+    {
+      "id": "preview_cleanup_series",
+      "label": "Preview retirement (series)",
+      "description": "Read-only count of owned, unmodified files eligible for recovery storage"
+    },
+    {
+      "id": "restore_series",
+      "label": "Restore retired files (series)",
+      "description": "Restore verified recovery copies without overwriting conflicting files"
+    },
+    {
+      "id": "preview_cleanup_movies",
+      "label": "Preview retirement (movies)",
+      "description": "Read-only count of owned, unmodified files eligible for recovery storage"
+    },
+    {
+      "id": "restore_movies",
+      "label": "Restore retired files (movies)",
+      "description": "Restore verified recovery copies without overwriting conflicting files"
     }
   ]
 }

@@ -1,6 +1,6 @@
 """
 VOD .strm Generator Plugin for Dispatcharr
-v1.5.2 - SQL-filtered episode loading
+v1.6.0 - Owned-file reconciliation
 
 MIT License
 Copyright (c) 2025-2026 shedunraid
@@ -9,158 +9,167 @@ https://github.com/shedunraid/VODVSCODE
 import os
 import re
 from typing import Dict, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class Plugin:
     """Generate .strm files for VOD movies from Dispatcharr."""
 
     name = "StreamSieve"
-    version = "1.5.2"
-    description = """• Convert Dispatcharr VODs to media library format (.strm files).        • SETUP: Map a host folder to /VODS in your Dispatcharr container (e.g., /mnt/media:/VODS).        • Configure root folders in plugin settings (/VODS/Movies and /VODS/Series by default).        • USAGE: Click 'Scan for VODs' to see totals.        • Use 'Generate Movie/Series .strm Files' with batch sizes (start small like 10 to test).        • Episodes auto-fetch per series as needed.        • Repeat clicks until complete - smart skip logic prevents duplicates.        • TIMING: Movies are fast (~30 sec per 250).        • Series OPTIMIZED: REAL THREADING! 50-70% faster with 3 parallel workers (10 series: 120s → ~50s)!        • Use batch of 1 for testing.        • NOTE: If you get errors, do a full browser refresh (Ctrl+F5 / Cmd+Shift+R) and try again.        • If you like this plugin please donate: https://paypal.me/shedunraid"""
-    
-    fields = [
-        {
-            "id": "root_folder",
-            "label": "Root Folder for Movies",
-            "type": "string",
-            "default": "/VODS/Movies",
-            "help_text": "Path where movie folders will be created"
-        },
-        {
-            "id": "series_root_folder",
-            "label": "Root Folder for Series",
-            "type": "string",
-            "default": "/VODS/Series",
-            "help_text": "Path where series folders will be created"
-        },
-        {
-            "id": "dispatcharr_url",
-            "label": "Dispatcharr URL (IMPORTANT!)",
-            "type": "string",
-            "default": "http://192.168.99.11:9191",
-            "help_text": "⚠️ MUST be your actual IP address (not localhost)! This URL goes into .strm files and must be accessible from your media server."
-        },
-        {
-            "id": "batch_size",
-            "label": "Batch Size (Movies)",
-            "type": "select",
-            "default": "250",
-            "options": [
-                {"value": "10", "label": "10 movies"},
-                {"value": "100", "label": "100 movies"},
-                {"value": "200", "label": "200 movies"},
-                {"value": "500", "label": "500 movies"},
-                {"value": "1000", "label": "1000 movies"},
-                {"value": "all", "label": "All movies"}
-            ],
-            "help_text": "Number of movies to process in this run"
-        },
-        {
-            "id": "generate_nfo",
-            "label": "Generate Movie NFO Files",
-            "type": "boolean",
-            "default": True,
-            "help_text": "Create .nfo metadata files for movies"
-        },
-        {
-            "id": "series_batch_size",
-            "label": "Batch Size (Series)",
-            "type": "select",
-            "default": "10",
-            "options": [
-                {"value": "1", "label": "1 series (testing)"},
-                {"value": "5", "label": "5 series"},
-                {"value": "10", "label": "10 series"},
-                {"value": "25", "label": "25 series"},
-                {"value": "all", "label": "All series (slow!)"}
-            ],
-            "help_text": "Unique whitelisted series to refresh and process in this run"
-        },
-        {
-            "id": "series_whitelist",
-            "label": "Series Whitelist (Dispatcharr IDs)",
-            "type": "string",
-            "default": "",
-            "placeholder": "12, 34, 56",
-            "help_text": "Comma-separated Dispatcharr Series database IDs. Only these series are eligible; leave blank to process no series."
-        },
-        {
-            "id": "generate_series_nfo",
-            "label": "Generate Series NFO Files",
-            "type": "boolean",
-            "default": True,
-            "help_text": "Create .nfo metadata files for series and episodes"
-        }
-    ]
-    
-    actions = [
-        {
-            "id": "scan_all_vods",
-            "label": "Scan for VODs to Convert",
-            "description": "Show total movies and series available in Dispatcharr"
-        },
-        {
-            "id": "generate_movies",
-            "label": "Generate Movie .strm Files",
-            "description": "Process movies according to batch size"
-        },
-        {
-            "id": "generate_series",
-            "label": "Generate Series .strm Files",
-            "description": "Fetch episodes + create .strm files (auto-fetch per series)"
-        },
-        {
-            "id": "cleanup_movies",
-            "label": "Clean Up Movies",
-            "description": "⚠️ Remove all movie folders and .strm files"
-        },
-        {
-            "id": "cleanup_series",
-            "label": "Clean Up Whitelisted Series",
-            "description": "⚠️ Remove folders only for series currently in the whitelist"
-        }
-    ]
-    
+    version = "1.6.0"
+    description = "Generate and reconcile owned movie/series STRM and NFO libraries. Initialize roots, preview changes, then synchronize. Legacy files require explicit adoption."
+
+    fields = [{'id': 'root_folder',
+  'label': 'Root Folder for Movies',
+  'type': 'string',
+  'default': '/VODS/Movies',
+  'help_text': 'Path where movie folders will be created'},
+ {'id': 'series_root_folder',
+  'label': 'Root Folder for Series',
+  'type': 'string',
+  'default': '/VODS/Series',
+  'help_text': 'Path where series folders will be created'},
+ {'id': 'dispatcharr_url',
+  'label': 'Dispatcharr URL (IMPORTANT!)',
+  'type': 'string',
+  'default': 'http://192.168.99.11:9191',
+  'help_text': 'Must be accessible from your media server; this URL is written into .strm files.'},
+ {'id': 'batch_size',
+  'label': 'Batch Size (Movies)',
+  'type': 'select',
+  'default': '100',
+  'options': [{'value': '10', 'label': '10 movies'},
+              {'value': '100', 'label': '100 movies'},
+              {'value': '200', 'label': '200 movies'},
+              {'value': '500', 'label': '500 movies'},
+              {'value': '1000', 'label': '1000 movies'},
+              {'value': 'all', 'label': 'All movies'}],
+  'help_text': 'Number of movies to process in this run'},
+ {'id': 'generate_nfo',
+  'label': 'Generate Movie NFO Files',
+  'type': 'boolean',
+  'default': True,
+  'help_text': 'Create .nfo metadata files for movies'},
+ {'id': 'series_batch_size',
+  'label': 'Batch Size (Series)',
+  'type': 'select',
+  'default': '10',
+  'options': [{'value': '1', 'label': '1 series (testing)'},
+              {'value': '5', 'label': '5 series'},
+              {'value': '10', 'label': '10 series'},
+              {'value': '25', 'label': '25 series'},
+              {'value': 'all', 'label': 'All series (slow!)'}],
+  'help_text': 'Unique whitelisted series to refresh and process in this run'},
+ {'id': 'series_whitelist',
+  'label': 'Series Whitelist (Dispatcharr IDs)',
+  'type': 'string',
+  'default': '',
+  'placeholder': '12, 34, 56',
+  'help_text': 'Comma-separated Dispatcharr Series database IDs. Only these series are eligible; '
+               'leave blank to process no series.'},
+ {'id': 'generate_series_nfo',
+  'label': 'Generate Series NFO Files',
+  'type': 'boolean',
+  'default': True,
+  'help_text': 'Create .nfo metadata files for series and episodes'},
+ {'id': 'account_priority',
+  'label': 'Account priority (Dispatcharr IDs)',
+  'type': 'string',
+  'default': '',
+  'help_text': 'Comma-separated account IDs, highest preference first. Other eligible accounts '
+               'follow by relation ID.'}]
+
+    actions = [{'id': 'scan_all_vods',
+  'label': 'Scan VOD catalog',
+  'description': 'Show available movies and series'},
+ {'id': 'initialize_series',
+  'label': 'Initialize (series)',
+  'description': 'Create ownership state for an existing mounted root; leaves media untouched'},
+ {'id': 'preview_series',
+  'label': 'Preview (series)',
+  'description': 'Read-only preview using the current Dispatcharr catalog; no provider refresh'},
+ {'id': 'adopt_series',
+  'label': 'Adopt matching legacy STRMs (series)',
+  'description': 'Claim unambiguous existing Dispatcharr proxy UUIDs and preserve legacy paths; '
+                 'NFOs remain unmanaged'},
+ {'id': 'generate_series',
+  'label': 'Synchronize (series)',
+  'description': 'Create missing files and update owned files; no automatic deletion'},
+ {'id': 'cleanup_series',
+  'label': 'Retire owned files (series)',
+  'description': 'Copy verified owned files to sibling state/recovery storage, then remove them; '
+                 'series limited to current whitelist'},
+ {'id': 'initialize_movies',
+  'label': 'Initialize (movies)',
+  'description': 'Create ownership state for an existing mounted root; leaves media untouched'},
+ {'id': 'preview_movies',
+  'label': 'Preview (movies)',
+  'description': 'Read-only preview using the current Dispatcharr catalog; no provider refresh'},
+ {'id': 'adopt_movies',
+  'label': 'Adopt matching legacy STRMs (movies)',
+  'description': 'Claim unambiguous existing Dispatcharr proxy UUIDs and preserve legacy paths; '
+                 'NFOs remain unmanaged'},
+ {'id': 'generate_movies',
+  'label': 'Synchronize (movies)',
+  'description': 'Create missing files and update owned files; no automatic deletion'},
+ {'id': 'cleanup_movies',
+  'label': 'Retire owned files (movies)',
+  'description': 'Copy verified owned files to sibling state/recovery storage, then remove them; '
+                 'series limited to current whitelist'},
+ {'id': 'preview_adopt_series',
+  'label': 'Preview adoption (series)',
+  'description': 'Read-only report of matching legacy STRMs eligible for ownership'},
+ {'id': 'preview_adopt_movies',
+  'label': 'Preview adoption (movies)',
+  'description': 'Read-only report of matching legacy STRMs eligible for ownership'},
+ {'id': 'preview_cleanup_series',
+  'label': 'Preview retirement (series)',
+  'description': 'Read-only count of owned, unmodified files eligible for recovery storage'},
+ {'id': 'restore_series',
+  'label': 'Restore retired files (series)',
+  'description': 'Restore verified recovery copies without overwriting conflicting files'},
+ {'id': 'preview_cleanup_movies',
+  'label': 'Preview retirement (movies)',
+  'description': 'Read-only count of owned, unmodified files eligible for recovery storage'},
+ {'id': 'restore_movies',
+  'label': 'Restore retired files (movies)',
+  'description': 'Restore verified recovery copies without overwriting conflicting files'}]
+
     def run(self, action: str, params: dict, context: dict):
         """Execute plugin action."""
         logger = context.get("logger")
         settings = context.get("settings", {})
-        
+
         logger.info("=" * 60)
         logger.info("VOD .strm Generator v%s", self.version)
         logger.info("Action: %s", action)
         logger.info("=" * 60)
-        
-        if action == "scan_all_vods":
-            return self._scan_all_vods(settings, logger)
-        elif action == "generate_movies":
-            return self._generate_movies(settings, logger)
-        elif action == "generate_series":
-            return self._generate_series(settings, logger)
-        elif action == "cleanup_movies":
-            return self._cleanup_movies(settings, logger)
-        elif action == "cleanup_series":
-            return self._cleanup_series(settings, logger)
-        
-        return {"status": "error", "message": f"Unknown action: {action}"}
-    
+
+        try:
+            if action == "scan_all_vods":
+                return self._scan_all_vods(settings, logger)
+            if action in {item['id'] for item in self.actions}:
+                return self._library_action(action, settings, logger)
+            return {"status": "error", "message": f"Unknown action: {action}"}
+        except Exception as exc:
+            logger.error("StreamSieve action failed: %s", exc)
+            return {"status": "error", "message": str(exc)}
+
     def _scan_all_vods(self, settings: Dict[str, Any], logger):
         """Scan and show total movies and series available."""
         logger.info("Scanning VODs in Dispatcharr...")
         logger.info("")
-        
+
         try:
             from apps.vod.models import M3UMovieRelation, M3USeriesRelation
         except ImportError as e:
             logger.error("Failed to import models: %s", e)
             return {"status": "error", "message": f"Import error: {e}"}
-        
+
         try:
             # Count movies and series
             movie_count = M3UMovieRelation.objects.count()
             series_count = M3USeriesRelation.objects.count()
-            
+
             logger.info("=" * 60)
             logger.info("MOVIES: %d", movie_count)
             logger.info("SERIES: %d", series_count)
@@ -168,7 +177,7 @@ class Plugin:
             logger.info("")
             logger.info("Use 'Generate Movie .strm Files' for movies")
             logger.info("Use 'Generate Series .strm Files' for series")
-            
+
             return {
                 "status": "ok",
                 "message": f"Found {movie_count} movies and {series_count} series",
@@ -178,384 +187,200 @@ class Plugin:
         except Exception as e:
             logger.error("Scan failed: %s", e)
             return {"status": "error", "message": f"Scan error: {e}"}
-    
-    def _generate_movies(self, settings: Dict[str, Any], logger):
-        """Generate movie .strm files according to batch size."""
-        root_folder = settings.get("root_folder", "/VODS/Movies")
-        dispatcharr_url = settings.get("dispatcharr_url", "http://192.168.99.11:9191").rstrip("/")
-        batch_size = settings.get("batch_size") or "250"
-        generate_nfo = settings.get("generate_nfo", True)
-        
-        # Validate URL is not localhost
-        if "localhost" in dispatcharr_url.lower() or "127.0.0.1" in dispatcharr_url:
-            logger.error("=" * 60)
-            logger.error("CONFIGURATION ERROR!")
-            logger.error("Dispatcharr URL is set to localhost/127.0.0.1")
-            logger.error("This will NOT work in media servers!")
-            logger.error("")
-            logger.error("Current setting: %s", dispatcharr_url)
-            logger.error("Change to: http://192.168.99.11:9191 (or your actual IP)")
-            logger.error("=" * 60)
-            return {
-                "status": "error",
-                "message": "Dispatcharr URL must be an actual IP address, not localhost! Update settings and try again."
-            }
-        
-        logger.info("")
-        logger.info("Configuration:")
-        logger.info("  Root Folder: %s", root_folder)
-        logger.info("  Dispatcharr URL: %s", dispatcharr_url)
-        logger.info("  Batch Size: %s", batch_size)
-        logger.info("  Generate NFO: %s", "Yes" if generate_nfo else "No")
-        logger.info("")
-        
-        # Import Django models
-        try:
-            from apps.vod.models import Movie, M3UMovieRelation
-            from apps.m3u.models import M3UAccount
-        except ImportError as e:
-            logger.error("Failed to import models: %s", e)
-            return {"status": "error", "message": f"Import error: {e}"}
-        
-        # Get total count first
-        logger.info("Scanning database...")
-        try:
-            total_count = M3UMovieRelation.objects.count()
-            logger.info("Total VODs in database: %d", total_count)
-            logger.info("")
-        except Exception as e:
-            logger.error("Failed to count VODs: %s", e)
-            return {"status": "error", "message": f"Database error: {e}"}
-        
-        # Get movies based on batch size
-        logger.info("Querying movies for this batch...")
-        try:
-            # Get movies with their M3U relations
-            query = M3UMovieRelation.objects.select_related('movie', 'm3u_account', 'category')
-            filtered_count = query.count()
-            
-            if batch_size == "all":
-                movie_relations = list(query)
-                logger.info("Processing ALL %d movies", filtered_count)
-                target_batch = filtered_count
-            else:
-                target_batch = int(batch_size)
-                # Fetch 3x batch size to account for skips
-                fetch_size = min(target_batch * 3, filtered_count)
-                movie_relations = list(query[:fetch_size])
-                logger.info("Fetching %d movies to process batch of %d", fetch_size, target_batch)
-            
-            if not movie_relations:
-                logger.warning("No movies found in database!")
-                return {
-                    "status": "ok",
-                    "message": "No movies found to process",
-                    "processed": 0
-                }
-            
-            logger.info("Found %d movies to process", len(movie_relations))
-            logger.info("")
-            
-        except Exception as e:
-            logger.error("Database query failed: %s", e)
-            return {"status": "error", "message": f"Database error: {e}"}
-        
-        # Ensure root folder exists
-        try:
-            os.makedirs(root_folder, exist_ok=True)
-            logger.info("Root folder ready: %s", root_folder)
-            logger.info("")
-        except Exception as e:
-            logger.error("Failed to create root folder: %s", e)
-            return {"status": "error", "message": f"Folder creation error: {e}"}
-        
-        # Process movies until we've created the target batch
-        created_strm = 0
-        created_nfo = 0
-        skipped = 0
-        errors = 0
-        processed = 0
-        
-        logger.info("Processing movies:")
-        logger.info("-" * 60)
-        
-        for idx, relation in enumerate(movie_relations, 1):
-            processed += 1
-            movie = relation.movie
-            stream_id = relation.stream_id
-            
-            # Build movie name with year (clean language prefix)
-            raw_name = movie.name or f"Unknown Movie {movie.id}"
-            movie_name = self._clean_title(raw_name)
-            year = movie.year
-            
-            if year:
-                folder_name = f"{self._sanitize_filename(movie_name)} ({year})"
-                strm_filename = f"{self._sanitize_filename(movie_name)} ({year}).strm"
-            else:
-                folder_name = self._sanitize_filename(movie_name)
-                strm_filename = f"{self._sanitize_filename(movie_name)}.strm"
-            
-            # Create movie folder and paths
-            movie_folder = os.path.join(root_folder, folder_name)
-            strm_path = os.path.join(movie_folder, strm_filename)
-            
-            # Check if already processed
-            if os.path.exists(strm_path):
-                skipped += 1
-                if idx % 50 == 1 or idx <= 10:
-                    logger.info("")
-                    logger.info("[%d/%d] %s - Already exists, skipping", idx, len(movie_relations), movie_name)
-                continue
-            
-            # Stop if we've created enough for this batch (unless processing all)
-            if batch_size != "all" and created_strm >= target_batch:
-                logger.info("")
-                logger.info("Batch complete! Created %d movies.", target_batch)
-                break
-            
-            # Build proxy URL
-            proxy_url = f"{dispatcharr_url}/proxy/vod/movie/{movie.uuid}?stream_id={stream_id}"
-            
-            # Log every 50th movie to avoid spam
-            if idx % 50 == 1 or idx <= 10:
-                logger.info("")
-                logger.info("[%d/%d] %s", idx, len(movie_relations), movie_name)
-                logger.info("  Year: %s", year if year else "Unknown")
-                logger.info("  Folder: %s", folder_name)
-                logger.info("  UUID: %s", movie.uuid)
-                logger.info("  Stream ID: %s", stream_id)
-            
-            try:
-                # Create folder
-                os.makedirs(movie_folder, exist_ok=True)
-                
-                # Write .strm file
-                with open(strm_path, 'w', encoding='utf-8') as f:
-                    f.write(proxy_url)
-                created_strm += 1
-                
-                # Write .nfo file if enabled
-                if generate_nfo:
-                    nfo_filename = strm_filename.replace('.strm', '.nfo')
-                    nfo_path = os.path.join(movie_folder, nfo_filename)
-                    
-                    category_name = relation.category.name if relation.category else ""
-                    nfo_content = self._generate_nfo(movie, category_name)
-                    
-                    with open(nfo_path, 'w', encoding='utf-8') as f:
-                        f.write(nfo_content)
-                    created_nfo += 1
-                
-                if idx % 50 == 1 or idx <= 10:
-                    logger.info("  ✓ Created: .strm%s", " + .nfo" if generate_nfo else "")
-                
-            except Exception as e:
-                logger.error("  ✗ Error: %s", e)
-                errors += 1
-        
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("SUMMARY:")
-        logger.info("  Total in DB:    %d", total_count)
-        logger.info("  Examined:       %d", processed)
-        logger.info("  .strm created:  %d", created_strm)
-        if generate_nfo:
-            logger.info("  .nfo created:   %d", created_nfo)
-        logger.info("  Skipped:        %d", skipped)
-        logger.info("  Errors:         %d", errors)
-        logger.info("=" * 60)
-        logger.info("")
-        logger.info("Complete! Check your media server to verify playback.")
-        
-        summary_msg = f"Created {created_strm} .strm files"
-        if generate_nfo:
-            summary_msg += f" + {created_nfo} .nfo files"
-        
-        return {
-            "status": "ok",
-            "message": summary_msg,
-            "total_in_db": total_count,
-            "processed": processed,
-            "created_strm": created_strm,
-            "created_nfo": created_nfo if generate_nfo else 0,
-            "skipped": skipped,
-            "errors": errors
-        }
-    
-    def _generate_series(self, settings: Dict[str, Any], logger):
-        """Generate series .strm files with episodes using parallel processing."""
-        series_root = settings.get("series_root_folder", "/VODS/Series")
-        dispatcharr_url = settings.get("dispatcharr_url", "http://192.168.99.11:9191").rstrip("/")
-        batch_size = settings.get("series_batch_size") or "10"
-        generate_nfo = settings.get("generate_series_nfo", True)
-        raw_whitelist = settings.get("series_whitelist", "")
-        try:
-            series_whitelist = self._parse_series_whitelist(raw_whitelist)
-        except ValueError as e:
-            logger.error("Invalid series whitelist: %s", e)
-            return {"status": "error", "message": f"Invalid series whitelist: {e}"}
 
-        # Validate URL
-        if "localhost" in dispatcharr_url.lower() or "127.0.0.1" in dispatcharr_url:
-            return {"status": "error", "message": "Dispatcharr URL must be an actual IP address!"}
-        
-        logger.info("")
-        logger.info("Configuration:")
-        logger.info("  Series Root: %s", series_root)
-        logger.info("  Dispatcharr URL: %s", dispatcharr_url)
-        logger.info("  Batch Size: %s", batch_size)
-        logger.info("  Series Whitelist: %s", ", ".join(str(series_id) for series_id in series_whitelist) or "Empty")
-        logger.info("  Generate NFO: %s", "Yes" if generate_nfo else "No")
-        logger.info("  Threading: ENABLED (3 workers)")
-        logger.info("")
-
-        if not series_whitelist:
-            logger.warning("Series whitelist is empty; no series will be processed.")
-            return {
-                "status": "ok",
-                "message": "Series whitelist is empty; no series were processed",
-                "series_processed": 0,
-                "episodes_created": 0,
-                "nfo_created": 0,
-                "errors": 0
-            }
-        
-        try:
-            from apps.vod.models import M3USeriesRelation
-        except ImportError as e:
-            logger.error("Failed to import models: %s", e)
-            return {"status": "error", "message": f"Import error: {e}"}
-        
-        # Get series
-        try:
-            # Apply the whitelist before counting or slicing so batching only sees
-            # explicitly selected Dispatcharr Series records.
-            query = M3USeriesRelation.objects.select_related(
-                'series', 'm3u_account', 'category'
-            )
-            series_relations, missing_ids, total_count = self._select_series_relations(
-                query, series_whitelist, batch_size
-            )
-            if missing_ids:
-                logger.warning(
-                    "Whitelist IDs not found in Dispatcharr: %s",
-                    ", ".join(str(series_id) for series_id in missing_ids)
-                )
-
-            if batch_size == "all":
-                logger.info("Processing ALL %d unique whitelisted series", total_count)
+    def _library_action(self, action, settings, logger):
+        # Loaded by path because Dispatcharr may load plugin.py outside a package.
+        import importlib.util
+        from urllib.parse import urlsplit, urlencode
+        spec = importlib.util.spec_from_file_location('streamsieve_reconciliation', os.path.join(os.path.dirname(__file__), 'reconciliation.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        series_mode = action.endswith('series')
+        root = settings.get('series_root_folder' if series_mode else 'root_folder', '/VODS/Series' if series_mode else '/VODS/Movies')
+        other = settings.get('root_folder' if series_mode else 'series_root_folder', '/VODS/Movies' if series_mode else '/VODS/Series')
+        first, second = os.path.abspath(root), os.path.abspath(other)
+        if os.path.commonpath([first, second]) in (first, second):
+            raise ValueError('Movie and series roots must not overlap')
+        preview = action.startswith('preview_')
+        initialize = action.startswith('initialize_')
+        adopt = action.startswith('adopt_') or action.startswith('preview_adopt_')
+        cleanup = action.startswith('cleanup_') or action.startswith('preview_cleanup_')
+        restore = action.startswith('restore_')
+        with module.Library(root, preview=preview, initialize=initialize) as library:
+            if initialize:
+                return {'status': 'ok', 'message': 'Library initialized; existing files remain unmanaged'}
+            whitelist = self._parse_series_whitelist(settings.get('series_whitelist', '')) if series_mode else []
+            if restore:
+                result = library.restore({'series:' + str(i) for i in whitelist} if series_mode else None)
+                return {'status': 'error' if result['conflict'] else 'ok', 'message': 'Recovery complete; existing conflicting files were preserved', **result}
+            if cleanup:
+                result = library.retire({'series:' + str(i) for i in whitelist} if series_mode else None)
+                return {'status': 'error' if result['conflict'] else 'ok', 'message': 'Retirement preview; no files changed' if preview else 'Owned files copied to sibling state/recovery directory and removed from library', **result}
+            base = settings.get('dispatcharr_url', '').rstrip('/')
+            parsed = urlsplit(base)
+            if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError('Set a valid HTTP(S) Dispatcharr URL without credentials, query, or fragment')
+            counts = dict(created=0, updated=0, unchanged=0, unmanaged=0, conflict=0, adopted=0, errors=0)
+            details = []
+            def write(key, path, content, owner, can_adopt=False):
+                if adopt and not can_adopt:
+                    return
+                result = library.write(key, path, content, owner, adopt=can_adopt)
+                counts[result] += 1
+                if result != 'unchanged':
+                    logger.info('%s: %s', result, path)
+                    if len(details) < 100:
+                        details.append({'operation': result, 'path': path})
+            # Locate legacy proxy files by UUID, preserving arbitrary existing
+            # filenames. Ambiguous mappings are errors, never guesses by title.
+            legacy = {}
+            if library.root.exists():
+                for directory, dirs, files in os.walk(library.root, followlinks=False):
+                    for filename in files:
+                        if not filename.lower().endswith('.strm'):
+                            continue
+                        relative = os.path.relpath(os.path.join(directory, filename), library.root)
+                        target = library.path(relative)
+                        if target.stat().st_size > 8192:
+                            continue
+                        try:
+                            old = urlsplit(target.read_text().strip())
+                        except (UnicodeError, ValueError):
+                            continue
+                        prefix = parsed.path.rstrip('/') + '/proxy/vod/'
+                        if old.scheme in ('http', 'https') and old.netloc == parsed.netloc and old.path.startswith(prefix):
+                            parts = old.path[len(prefix):].strip('/').split('/')
+                            if len(parts) == 2:
+                                legacy.setdefault(tuple(parts), []).append(relative)
+            def existing(kind, identity):
+                paths = legacy.get((kind, str(identity)), [])
+                if len(paths) > 1:
+                    raise ValueError('Ambiguous legacy paths for ' + kind + ' ' + str(identity))
+                return paths[0] if paths else None
+            def adoptable(path, kind, identity):
+                return adopt and existing(kind, identity) == path
+            if series_mode:
+                from apps.vod.models import M3USeriesRelation, M3UEpisodeRelation
+                from apps.vod.tasks import refresh_series_episodes
+                query = M3USeriesRelation.objects.filter(series_id__in=whitelist).select_related('series', 'm3u_account', 'category').order_by('series_id', 'id')
+                grouped = {}
+                for relation in query:
+                    if self._eligible(relation):
+                        grouped.setdefault(relation.series_id, []).append(relation)
+                relations = [self._preferred(grouped[i], settings, library.state.setdefault('sources', {}), 'series:' + str(i)) for i in whitelist if i in grouped]
+                missing = [i for i in whitelist if i not in grouped]
             else:
-                logger.info(
-                    "Processing %d of %d unique whitelisted series",
-                    len(series_relations), total_count
-                )
-            
-            if not series_relations:
-                return {
-                    "status": "ok",
-                    "message": "No Dispatcharr series matched the whitelist",
-                    "series_processed": 0,
-                    "episodes_created": 0,
-                    "nfo_created": 0,
-                    "errors": 0
-                }
-            
-            logger.info("Found %d series to process", len(series_relations))
-            logger.info("")
-        except Exception as e:
-            logger.error("Query failed: %s", e)
-            return {"status": "error", "message": f"Database error: {e}"}
-        
-        # Ensure root exists
-        try:
-            os.makedirs(series_root, exist_ok=True)
-        except Exception as e:
-            return {"status": "error", "message": f"Folder creation error: {e}"}
-        
-        # Process series with ThreadPoolExecutor (3 workers for safety)
-        created_strm = 0
-        created_nfo = 0
-        errors = 0
-        series_processed = 0
-        unchanged = 0
-        
-        logger.info("Processing series with 3 parallel workers:")
-        logger.info("-" * 60)
-        
-        max_workers = 3
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit tasks for series that need processing
-            futures = {}
-            submitted = 0
-            
-            for series_rel in series_relations:
-                # Submit the processing task
-                future = executor.submit(
-                    self._process_single_series,
-                    series_rel,
-                    dispatcharr_url,
-                    generate_nfo,
-                    series_root,
-                    logger
-                )
-                futures[future] = series_rel
-                submitted += 1
-            
-            logger.info("Submitted %d series for parallel processing...", submitted)
-            logger.info("")
-            
-            # Process results as they complete
-            for idx, future in enumerate(as_completed(futures), 1):
-                series_rel = futures[future]
-                
+                from apps.vod.models import M3UMovieRelation
+                grouped = {}
+                for relation in M3UMovieRelation.objects.select_related('movie', 'm3u_account', 'category').order_by('movie_id', 'id'):
+                    if self._eligible(relation):
+                        grouped.setdefault(relation.movie_id, []).append(relation)
+                relations = [self._preferred(grouped[i], settings, library.state.setdefault('sources', {}), 'movie:' + str(i)) for i in sorted(grouped)]
+                missing = []
+            total = len(relations)
+            batch = settings.get('series_batch_size' if series_mode else 'batch_size', '10' if series_mode else '100')
+            limit = total if batch == 'all' else int(batch)
+            if limit <= 0 and total:
+                raise ValueError('Batch size must be positive')
+            start = library.state['cursor'] % total if total else 0
+            selected = relations if adopt else (relations[start:] + relations[:start])[:limit]
+            for relation in selected:
                 try:
-                    result = future.result()
-                    
-                    if "error" in result:
-                        errors += 1
+                    if series_mode:
+                        series = relation.series
+                        owner = 'series:' + str(series.id)
+                        if not preview and not adopt:
+                            refresh_series_episodes(account=relation.m3u_account, series=series, external_series_id=relation.external_series_id)
+                        episodes = M3UEpisodeRelation.objects.filter(m3u_account=relation.m3u_account, episode__series_id=series.id).select_related('episode').order_by('episode__season_number', 'episode__episode_number', 'id')
+                        by_episode = {}
+                        for candidate in episodes:
+                            # Newer Dispatcharr schemas explicitly associate episode
+                            # streams with a provider-series relation.
+                            parent = getattr(candidate, 'series_relation_id', None)
+                            if parent is not None and parent != relation.id:
+                                continue
+                            by_episode.setdefault(str(candidate.episode.uuid), []).append(candidate)
+                        legacy_folders = set()
+                        for identity in by_episode:
+                            old_path = existing('episode', identity)
+                            if old_path:
+                                parts = old_path.split(os.sep)
+                                if len(parts) < 3:
+                                    raise ValueError('Legacy series path has no show/season hierarchy: ' + old_path)
+                                legacy_folders.add(os.path.dirname(os.path.dirname(old_path)))
+                        if len(legacy_folders) > 1:
+                            raise ValueError('Episodes map to multiple legacy show folders')
+                        folder = library.assign(owner, next(iter(legacy_folders)) if legacy_folders else self._series_folder_name(series))
+                        if settings.get('generate_series_nfo', True) and by_episode:
+                            write(owner + ':nfo', folder + '/tvshow.nfo', self._generate_tvshow_nfo(series, relation.category.name if relation.category else '') + '\n', owner)
+                        numbers = set()
+                        for identity, candidates in by_episode.items():
+                            candidate = min(candidates, key=lambda r: r.id)
+                            episode = candidate.episode
+                            season, number = episode.season_number, episode.episode_number
+                            if not isinstance(season, int) or not isinstance(number, int) or season < 0 or number <= 0 or (season, number) in numbers:
+                                raise ValueError('Invalid or ambiguous episode numbering')
+                            numbers.add((season, number))
+                            title = self._clean_title(series.name or 'Unknown Series')
+                            name = f'{title} - S{season:02d}E{number:02d}'
+                            if episode.name:
+                                name += ' - ' + self._clean_title(episode.name)
+                            key = owner + ':episode:' + str(getattr(episode, 'id', identity))
+                            legacy_path = existing('episode', identity)
+                            stem = library.assign(key, legacy_path[:-5] if legacy_path else folder + f'/Season {season:02d}/' + self._sanitize_filename(name))
+                            path = stem + '.strm'
+                            url = base + '/proxy/vod/episode/' + identity + '?' + urlencode({'stream_id': candidate.stream_id}) + '\n'
+                            write(key + ':strm', path, url, owner, adoptable(path, 'episode', identity))
+                            if settings.get('generate_series_nfo', True):
+                                write(key + ':nfo', stem + '.nfo', self._generate_episode_nfo(episode) + '\n', owner)
                     else:
-                        series_processed += 1
+                        movie = relation.movie
+                        owner = 'movie:' + str(movie.id)
+                        title = self._clean_title(movie.name or f'Unknown Movie {movie.id}')
+                        name = self._sanitize_filename(title + (f' ({movie.year})' if movie.year else ''))
+                        legacy_path = existing('movie', movie.uuid)
+                        folder = library.assign(owner, os.path.dirname(legacy_path) if legacy_path else name)
+                        stem = library.assign(owner + ':media', legacy_path[:-5] if legacy_path else folder + '/' + name)
+                        path = stem + '.strm'
+                        url = base + '/proxy/vod/movie/' + str(movie.uuid) + '?' + urlencode({'stream_id': relation.stream_id}) + '\n'
+                        write(owner + ':strm', path, url, owner, adoptable(path, 'movie', movie.uuid))
+                        if settings.get('generate_nfo', True):
+                            write(owner + ':nfo', stem + '.nfo', self._generate_nfo(movie, relation.category.name if relation.category else '') + '\n', owner)
+                except Exception as exc:
+                    counts['errors'] += 1
+                    logger.error('Item reconciliation failed: %s', exc)
+            if total and not adopt:
+                library.checkpoint((start + len(selected)) % total)
+            return {'status': 'error' if counts['errors'] or counts['conflict'] else 'ok', 'message': 'Preview complete' if preview else 'Reconciliation complete; automatic orphan removal is disabled', 'counts': counts, 'processed': len(selected), 'total': total, 'missing_series_ids': missing, 'changes': details}
 
-                    if result.get("created"):
-                        created_strm += result["episodes"]
-                        created_nfo += result["nfo_files"]
-                        logger.info("[%d/%d] %s", idx, submitted, result["message"])
-                    elif result.get("skipped"):
-                        unchanged += 1
-                        created_nfo += result.get("nfo_files", 0)
-                        logger.info("[%d/%d] %s", idx, submitted, result["message"])
-                    else:
-                        # No episodes or other issue
-                        logger.info("[%d/%d] %s", idx, submitted, result["message"])
-                        
-                except Exception as e:
-                    logger.error("[%d/%d] Error processing series: %s", idx, submitted, e)
-                    errors += 1
-        
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("SUMMARY:")
-        logger.info("  Series processed: %d", series_processed)
-        logger.info("  Series already current: %d", unchanged)
-        logger.info("  New episodes created: %d", created_strm)
-        if generate_nfo:
-            logger.info("  NFO files created: %d", created_nfo)
-        logger.info("  Errors: %d", errors)
-        logger.info("=" * 60)
-        
-        summary_msg = f"Processed {series_processed} series; added {created_strm} new episodes"
-        if generate_nfo:
-            summary_msg += f" + {created_nfo} NFO files"
-        
-        return {
-            "status": "ok",
-            "message": summary_msg,
-            "series_processed": series_processed,
-            "episodes_created": created_strm,
-            "nfo_created": created_nfo if generate_nfo else 0,
-            "errors": errors
-        }
+    @staticmethod
+    def _eligible(relation):
+        account = relation.m3u_account
+        return getattr(account, 'is_active', True) and getattr(account, 'enabled', True) and getattr(relation, 'is_active', True)
+
+    @staticmethod
+    def _preferred(relations, settings, sources=None, key=None):
+        priority = [int(i.strip()) for i in settings.get('account_priority', '').split(',') if i.strip()]
+        previous = sources.get(key) if sources is not None else None
+        def rank(relation):
+            account_id = getattr(relation, 'm3u_account_id', getattr(relation.m3u_account, 'id', None))
+            return (priority.index(account_id) if account_id in priority else len(priority), relation.id != previous, relation.id)
+        selected = min(relations, key=rank)
+        if sources is not None:
+            sources[key] = selected.id
+        return selected
+
+    def _generate_movies(self, settings, logger):
+        return self._library_action('generate_movies', settings, logger)
+
+    def _generate_series(self, settings, logger):
+        return self._library_action('generate_series', settings, logger)
+
+    def _cleanup_movies(self, settings, logger):
+        return self._library_action('cleanup_movies', settings, logger)
+
+    def _cleanup_series(self, settings, logger):
+        return self._library_action('cleanup_series', settings, logger)
 
     def _parse_series_whitelist(self, value) -> list:
         """Parse comma-separated Dispatcharr Series primary keys."""
@@ -587,35 +412,6 @@ class Plugin:
 
         return series_ids
 
-    def _select_series_relations(self, query, series_whitelist, batch_size):
-        """Filter, deterministically deduplicate, and batch series relations."""
-        filtered_query = query.filter(
-            series_id__in=series_whitelist
-        ).order_by('series_id', 'id')
-
-        relation_by_series_id = {}
-        for relation in filtered_query:
-            relation_by_series_id.setdefault(relation.series_id, relation)
-
-        missing_ids = [
-            series_id for series_id in series_whitelist
-            if series_id not in relation_by_series_id
-        ]
-        relations = [
-            relation_by_series_id[series_id]
-            for series_id in series_whitelist
-            if series_id in relation_by_series_id
-        ]
-        total_count = len(relations)
-
-        if batch_size != "all":
-            target_batch = int(batch_size)
-            if target_batch <= 0:
-                raise ValueError("Series batch size must be positive")
-            relations = relations[:target_batch]
-
-        return relations, missing_ids, total_count
-
     def _series_folder_name(self, series) -> str:
         """Build the on-disk folder name shared by generation and cleanup."""
         raw_name = series.name or f"Unknown Series {series.id}"
@@ -625,413 +421,29 @@ class Plugin:
             return f"{sanitized_name} ({series.year})"
         return sanitized_name
 
-    def _process_single_series(self, series_rel, dispatcharr_url, generate_nfo, series_root, logger):
-        """Process a single series - fetches episodes and creates files (thread-safe)."""
-        from apps.vod.models import M3UEpisodeRelation
-        from apps.vod.tasks import refresh_series_episodes
-        
-        series = series_rel.series
-        
-        # Clean series name
-        raw_name = series.name or f"Unknown Series {series.id}"
-        series_name = self._clean_title(raw_name)
-        series_folder_name = self._series_folder_name(series)
-        
-        series_folder = os.path.join(series_root, series_folder_name)
-        
-        try:
-            # Always refresh so reruns discover episodes added by the provider.
-            refresh_series_episodes(
-                account=series_rel.m3u_account,
-                series=series_rel.series,
-                external_series_id=series_rel.external_series_id
-            )
-            
-            # Keep filtering and ordering in SQL so large provider catalogs do not
-            # load every episode relation into Python for each selected series.
-            episodes = (
-                M3UEpisodeRelation.objects
-                .filter(
-                    m3u_account=series_rel.m3u_account,
-                    episode__series_id=series.id,
-                )
-                .select_related("episode")
-                .order_by(
-                    "episode__season_number",
-                    "episode__episode_number",
-                )
-            )
-            
-            episode_count = len(episodes)
-            
-            if episode_count == 0:
-                return {
-                    "created": False,
-                    "skipped": False,
-                    "series_name": series_name,
-                    "episodes": 0,
-                    "nfo_files": 0,
-                    "message": f"{series_name} - No episodes found"
-                }
-            
-            # Create series folder
-            os.makedirs(series_folder, exist_ok=True)
-            
-            nfo_count = 0
-            created_episode_count = 0
-            
-            # Generate tvshow.nfo if enabled
-            if generate_nfo:
-                tvshow_nfo_path = os.path.join(series_folder, "tvshow.nfo")
-                tvshow_nfo_exists = os.path.exists(tvshow_nfo_path)
-                category_name = series_rel.category.name if series_rel.category else ""
-                tvshow_content = self._generate_tvshow_nfo(series, category_name)
-                with open(tvshow_nfo_path, 'w', encoding='utf-8') as f:
-                    f.write(tvshow_content)
-                if not tvshow_nfo_exists:
-                    nfo_count += 1
-            
-            # Process episodes by season
-            for episode_rel in episodes:
-                episode = episode_rel.episode
-                season_num = episode.season_number or 0
-                episode_num = episode.episode_number or 0
-                
-                # Create season folder
-                season_folder_name = f"Season {season_num:02d}"
-                season_folder = os.path.join(series_folder, season_folder_name)
-                os.makedirs(season_folder, exist_ok=True)
-                
-                # Build episode filename
-                episode_title = episode.name or ""
-                if episode_title:
-                    clean_title = self._clean_title(episode_title)
-                    filename = f"{series_name} - S{season_num:02d}E{episode_num:02d} - {clean_title}"
-                else:
-                    filename = f"{series_name} - S{season_num:02d}E{episode_num:02d}"
-                
-                filename = self._sanitize_filename(filename)
-                
-                # Create .strm file
-                strm_path = os.path.join(season_folder, f"{filename}.strm")
-                proxy_url = f"{dispatcharr_url}/proxy/vod/episode/{episode.uuid}?stream_id={episode_rel.stream_id}"
-
-                if not os.path.exists(strm_path):
-                    with open(strm_path, 'w', encoding='utf-8') as f:
-                        f.write(proxy_url)
-                    created_episode_count += 1
-                
-                # Create episode .nfo if enabled
-                if generate_nfo:
-                    nfo_path = os.path.join(season_folder, f"{filename}.nfo")
-                    if not os.path.exists(nfo_path):
-                        episode_nfo_content = self._generate_episode_nfo(episode)
-                        with open(nfo_path, 'w', encoding='utf-8') as f:
-                            f.write(episode_nfo_content)
-                        nfo_count += 1
-            
-            return {
-                "created": created_episode_count > 0,
-                "skipped": created_episode_count == 0,
-                "series_name": series_name,
-                "episodes": created_episode_count,
-                "nfo_files": nfo_count,
-                "message": (
-                    f"{series_name} - ✓ Added {created_episode_count} new episodes "
-                    f"({episode_count} available)"
-                    if created_episode_count
-                    else f"{series_name} - Up to date ({episode_count} episodes)"
-                )
-            }
-            
-        except Exception as e:
-            return {
-                "created": False,
-                "skipped": False,
-                "series_name": series_name,
-                "episodes": 0,
-                "nfo_files": 0,
-                "error": str(e),
-                "message": f"{series_name} - ✗ Error: {e}"
-            }
-    
-    def _cleanup_movies(self, settings: Dict[str, Any], logger):
-        """Clean up all generated movie .strm files and folders."""
-        root_folder = settings.get("root_folder", "/VODS/Movies")
-        
-        logger.info("=" * 60)
-        logger.info("VOD .strm Generator v%s", self.version)
-        logger.info("Action: cleanup")
-        logger.info("=" * 60)
-        logger.info("")
-        logger.info("⚠️  WARNING: This will delete ALL movie folders from Movies root!")
-        logger.info("Root Folder: %s", root_folder)
-        logger.info("")
-        
-        # Check if root folder exists
-        if not os.path.exists(root_folder):
-            logger.info("Root folder doesn't exist. Nothing to clean up.")
-            return {
-                "status": "ok",
-                "message": "Root folder doesn't exist",
-                "deleted_folders": 0,
-                "deleted_files": 0
-            }
-        
-        # Scan for folders with .strm or .nfo files
-        logger.info("Scanning for movie folders...")
-        folders_to_delete = []
-        strm_files_found = 0
-        nfo_files_found = 0
-        
-        try:
-            for item in os.listdir(root_folder):
-                item_path = os.path.join(root_folder, item)
-                
-                # Only process directories
-                if os.path.isdir(item_path):
-                    # Check if this folder contains .strm or .nfo files
-                    has_plugin_files = False
-                    for file in os.listdir(item_path):
-                        if file.endswith('.strm'):
-                            has_plugin_files = True
-                            strm_files_found += 1
-                        elif file.endswith('.nfo'):
-                            nfo_files_found += 1
-                    
-                    if has_plugin_files:
-                        folders_to_delete.append(item_path)
-            
-            logger.info("Found %d folders with plugin files", len(folders_to_delete))
-            logger.info("  .strm files: %d", strm_files_found)
-            logger.info("  .nfo files: %d", nfo_files_found)
-            logger.info("")
-            
-            if len(folders_to_delete) == 0:
-                logger.info("No movie folders found. Nothing to delete.")
-                return {
-                    "status": "ok",
-                    "message": "No .strm files found",
-                    "deleted_folders": 0,
-                    "deleted_files": 0
-                }
-            
-            # Show what will be deleted
-            logger.info("Folders to be deleted:")
-            logger.info("-" * 60)
-            for idx, folder in enumerate(folders_to_delete[:10], 1):  # Show first 10
-                logger.info("  [%d] %s", idx, os.path.basename(folder))
-            
-            if len(folders_to_delete) > 10:
-                logger.info("  ... and %d more folders", len(folders_to_delete) - 10)
-            
-            logger.info("")
-            logger.info("Proceeding with deletion...")
-            logger.info("")
-            
-            # Delete folders
-            deleted_folders = 0
-            deleted_strm = 0
-            deleted_nfo = 0
-            errors = 0
-            
-            for idx, folder_path in enumerate(folders_to_delete, 1):
-                try:
-                    # Count files before deletion
-                    strm_count = sum(1 for f in os.listdir(folder_path) if f.endswith('.strm'))
-                    nfo_count = sum(1 for f in os.listdir(folder_path) if f.endswith('.nfo'))
-                    
-                    # Delete the entire folder
-                    import shutil
-                    shutil.rmtree(folder_path)
-                    
-                    deleted_folders += 1
-                    deleted_strm += strm_count
-                    deleted_nfo += nfo_count
-                    
-                    # Log progress every 50 folders
-                    if idx % 50 == 0 or idx == len(folders_to_delete):
-                        logger.info("Progress: %d/%d folders deleted", idx, len(folders_to_delete))
-                    
-                except Exception as e:
-                    logger.error("Failed to delete %s: %s", folder_path, e)
-                    errors += 1
-            
-            logger.info("")
-            logger.info("=" * 60)
-            logger.info("CLEANUP SUMMARY:")
-            logger.info("  Folders deleted:    %d", deleted_folders)
-            logger.info("  .strm deleted:      %d", deleted_strm)
-            logger.info("  .nfo deleted:       %d", deleted_nfo)
-            logger.info("  Errors:             %d", errors)
-            logger.info("=" * 60)
-            logger.info("")
-            logger.info("Cleanup complete!")
-            
-            summary_msg = f"Deleted {deleted_folders} folders ({deleted_strm} .strm"
-            if deleted_nfo > 0:
-                summary_msg += f" + {deleted_nfo} .nfo"
-            summary_msg += " files)"
-            
-            return {
-                "status": "ok",
-                "message": summary_msg,
-                "deleted_folders": deleted_folders,
-                "deleted_strm": deleted_strm,
-                "deleted_nfo": deleted_nfo,
-                "errors": errors
-            }
-            
-        except Exception as e:
-            logger.error("Cleanup failed: %s", e)
-            return {
-                "status": "error",
-                "message": f"Cleanup error: {e}"
-            }
-    
-    def _cleanup_series(self, settings: Dict[str, Any], logger):
-        """Clean up generated folders for currently whitelisted series only."""
-        series_root = settings.get("series_root_folder", "/VODS/Series")
-        try:
-            series_whitelist = self._parse_series_whitelist(
-                settings.get("series_whitelist", "")
-            )
-        except ValueError as e:
-            logger.error("Invalid series whitelist: %s", e)
-            return {"status": "error", "message": f"Invalid series whitelist: {e}"}
-
-        logger.info("=" * 60)
-        logger.info("Whitelisted Series Cleanup")
-        logger.info("=" * 60)
-        logger.info("")
-        logger.info("⚠️  WARNING: This deletes folders for whitelisted series only.")
-        logger.info("Series Root: %s", series_root)
-        logger.info(
-            "Series Whitelist: %s",
-            ", ".join(str(series_id) for series_id in series_whitelist) or "Empty"
-        )
-        logger.info("")
-
-        if not series_whitelist:
-            logger.warning("Series whitelist is empty; nothing will be deleted.")
-            return {
-                "status": "ok",
-                "message": "Series whitelist is empty; nothing was deleted",
-                "deleted": 0,
-                "errors": 0
-            }
-
-        if not os.path.exists(series_root):
-            logger.info("Series root doesn't exist. Nothing to clean up.")
-            return {"status": "ok", "message": "Series root doesn't exist", "deleted": 0}
-
-        folders_to_delete = []
-        strm_count = 0
-        nfo_count = 0
-
-        try:
-            import shutil
-            from apps.vod.models import Series
-
-            whitelisted_series = Series.objects.filter(id__in=series_whitelist)
-            expected_folders = {
-                os.path.join(series_root, self._series_folder_name(series))
-                for series in whitelisted_series
-            }
-
-            for folder_path in sorted(expected_folders):
-                if not os.path.isdir(folder_path):
-                    continue
-
-                has_series_content = False
-                for root, dirs, files in os.walk(folder_path):
-                    if os.path.basename(root).startswith("Season"):
-                        has_series_content = True
-                    strm_count += sum(1 for filename in files if filename.endswith('.strm'))
-                    nfo_count += sum(1 for filename in files if filename.endswith('.nfo'))
-
-                if has_series_content:
-                    folders_to_delete.append(folder_path)
-
-            logger.info("Found %d whitelisted series folders", len(folders_to_delete))
-            logger.info("  .strm files: ~%d", strm_count)
-            logger.info("  .nfo files: ~%d", nfo_count)
-            logger.info("")
-
-            if len(folders_to_delete) == 0:
-                logger.info("No whitelisted series folders found. Nothing to delete.")
-                return {"status": "ok", "message": "No whitelisted series folders found", "deleted": 0}
-
-            # Show first 10
-            logger.info("Whitelisted series to be deleted:")
-            logger.info("-" * 60)
-            for idx, folder in enumerate(folders_to_delete[:10], 1):
-                logger.info("  [%d] %s", idx, os.path.basename(folder))
-
-            if len(folders_to_delete) > 10:
-                logger.info("  ... and %d more", len(folders_to_delete) - 10)
-
-            logger.info("")
-            logger.info("Proceeding with deletion...")
-            logger.info("")
-
-            # Delete series folders
-            deleted = 0
-            errors = 0
-
-            for idx, folder_path in enumerate(folders_to_delete, 1):
-                try:
-                    shutil.rmtree(folder_path)
-                    deleted += 1
-
-                    if idx % 10 == 0 or idx == len(folders_to_delete):
-                        logger.info("Progress: %d/%d deleted", idx, len(folders_to_delete))
-
-                except Exception as e:
-                    logger.error("Failed to delete %s: %s", folder_path, e)
-                    errors += 1
-
-            logger.info("")
-            logger.info("=" * 60)
-            logger.info("CLEANUP SUMMARY:")
-            logger.info("  Whitelisted series deleted: %d", deleted)
-            logger.info("  Errors: %d", errors)
-            logger.info("=" * 60)
-
-            return {
-                "status": "ok",
-                "message": f"Deleted {deleted} whitelisted series folders",
-                "deleted": deleted,
-                "errors": errors
-            }
-
-        except Exception as e:
-            logger.error("Cleanup failed: %s", e)
-            return {"status": "error", "message": f"Cleanup error: {e}"}
-    
     def _clean_title(self, title: str) -> str:
         """Remove language prefixes (EN -, FR -, etc.) from movie titles."""
         if not title:
             return title
-        
+
         # Remove common language prefixes: EN -, FR -, US -, etc.
         cleaned = re.sub(r'^[A-Z]{2,3}\s*-\s*', '', title)
         return cleaned.strip()
-    
+
     def _extract_genres(self, category_name: str) -> list:
         """Extract genre names from category name."""
         if not category_name:
             return []
-        
+
         # Remove common prefixes (EN -, FR -, US -, etc.)
         genre_text = re.sub(r'^[A-Z]{2,3}\s*-\s*', '', category_name)
-        
+
         # Remove (movie) or (series) suffix
         genre_text = re.sub(r'\s*\((movie|series)\)\s*$', '', genre_text, flags=re.IGNORECASE)
-        
+
         # Split on common separators
         genres = re.split(r'[/&,]', genre_text)
-        
+
         # Clean up each genre
         cleaned_genres = []
         for genre in genres:
@@ -1040,9 +452,9 @@ class Plugin:
             genre = ' '.join(word.capitalize() for word in genre.split())
             if genre:
                 cleaned_genres.append(genre)
-        
+
         return cleaned_genres or ["Unknown"]
-    
+
     def _generate_tvshow_nfo(self, series, category_name: str) -> str:
         """Generate tvshow.nfo XML content for a series."""
         # Extract basic info (clean language prefix)
@@ -1050,28 +462,29 @@ class Plugin:
         title = self._clean_title(raw_title)
         year = series.year or ""
         plot = series.description or ""
-        
+
         # Extract genres from category
         genres = self._extract_genres(category_name)
-        
+
         # Build XML
         xml_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>']
         xml_lines.append('<tvshow>')
         xml_lines.append(f'    <title>{self._xml_escape(title)}</title>')
-        
+
         if year:
             xml_lines.append(f'    <year>{year}</year>')
-        
+
         for genre in genres:
             xml_lines.append(f'    <genre>{self._xml_escape(genre)}</genre>')
-        
+
         if plot:
             xml_lines.append(f'    <plot>{self._xml_escape(plot)}</plot>')
-        
+
+        xml_lines.extend(self._metadata_ids(series))
         xml_lines.append('</tvshow>')
-        
+
         return '\n'.join(xml_lines)
-    
+
     def _generate_episode_nfo(self, episode) -> str:
         """Generate episode.nfo XML content for an episode."""
         # Extract episode info (clean language prefix)
@@ -1080,21 +493,22 @@ class Plugin:
         season_num = episode.season_number or 0
         episode_num = episode.episode_number or 0
         plot = episode.description or ""
-        
+
         # Build XML
         xml_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>']
         xml_lines.append('<episodedetails>')
         xml_lines.append(f'    <title>{self._xml_escape(title)}</title>')
         xml_lines.append(f'    <season>{season_num}</season>')
         xml_lines.append(f'    <episode>{episode_num}</episode>')
-        
+
         if plot:
             xml_lines.append(f'    <plot>{self._xml_escape(plot)}</plot>')
-        
+
+        xml_lines.extend(self._metadata_ids(episode))
         xml_lines.append('</episodedetails>')
-        
+
         return '\n'.join(xml_lines)
-    
+
     def _generate_nfo(self, movie, category_name: str) -> str:
         """Generate NFO XML content for a movie."""
         # Extract basic info (clean language prefix)
@@ -1105,37 +519,45 @@ class Plugin:
         rating = movie.rating or ""
         tmdb_id = movie.tmdb_id or ""
         imdb_id = movie.imdb_id or ""
-        
+
         # Extract genres from category
         genres = self._extract_genres(category_name)
-        
+
         # Build XML
         xml_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>']
         xml_lines.append('<movie>')
         xml_lines.append(f'    <title>{self._xml_escape(title)}</title>')
-        
+
         if year:
             xml_lines.append(f'    <year>{year}</year>')
-        
+
         for genre in genres:
             xml_lines.append(f'    <genre>{self._xml_escape(genre)}</genre>')
-        
+
         if plot:
             xml_lines.append(f'    <plot>{self._xml_escape(plot)}</plot>')
-        
+
         if rating:
             xml_lines.append(f'    <rating>{rating}</rating>')
-        
+
         if tmdb_id:
             xml_lines.append(f'    <tmdbid>{tmdb_id}</tmdbid>')
-        
+
         if imdb_id:
             xml_lines.append(f'    <imdbid>{imdb_id}</imdbid>')
-        
+
         xml_lines.append('</movie>')
-        
+
         return '\n'.join(xml_lines)
-    
+
+    def _metadata_ids(self, item):
+        result = []
+        for provider in ('tmdb', 'imdb'):
+            value = getattr(item, provider + '_id', None)
+            if value:
+                result.append(f'    <uniqueid type="{provider}">{self._xml_escape(value)}</uniqueid>')
+        return result
+
     def _xml_escape(self, text: str) -> str:
         """Escape special XML characters."""
         if not text:
@@ -1147,22 +569,24 @@ class Plugin:
         text = text.replace('"', '&quot;')
         text = text.replace("'", '&apos;')
         return text
-    
+
     def _sanitize_filename(self, name: str) -> str:
         """Sanitize filename by removing invalid characters."""
         if not name:
             return "Unknown"
-        
+
         # Remove invalid characters for Windows/Linux filesystems
         name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', name)
-        
+
         # Replace multiple spaces with single space
         name = re.sub(r'\s+', ' ', name)
-        
+
         # Trim and limit length
-        name = name.strip()[:200]
-        
+        name = name.strip().encode('utf-8')[:180].decode('utf-8', errors='ignore')
+
         # Remove trailing dots/spaces (Windows issue)
         name = name.rstrip('. ')
-        
+
+        if name.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *('COM' + str(i) for i in range(1, 10)), *('LPT' + str(i) for i in range(1, 10))}:
+            name = '_' + name
         return name or "Unknown"
