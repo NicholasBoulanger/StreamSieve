@@ -1,6 +1,6 @@
 """
 VOD .strm Generator Plugin for Dispatcharr
-v1.6.0 - Owned-file reconciliation
+v1.7.0 - Title-based show selection
 
 MIT License
 Copyright (c) 2025-2026 shedunraid
@@ -15,7 +15,7 @@ class Plugin:
     """Generate .strm files for VOD movies from Dispatcharr."""
 
     name = "StreamSieve"
-    version = "1.6.0"
+    version = "1.7.0"
     description = "Generate and reconcile owned movie/series STRM and NFO libraries. Initialize roots, preview changes, then synchronize. Legacy files require explicit adoption."
 
     fields = [{'id': 'root_folder',
@@ -59,13 +59,28 @@ class Plugin:
               {'value': '25', 'label': '25 series'},
               {'value': 'all', 'label': 'All series (slow!)'}],
   'help_text': 'Unique whitelisted series to refresh and process in this run'},
+ {'id': 'series_titles',
+  'label': 'Shows to include',
+  'type': 'text',
+  'default': '',
+  'placeholder': 'Breaking Bad (2008)\nSeverance (2022)',
+  'help_text': 'One exact Dispatcharr show title per line. Add (year) to distinguish remakes. Use '
+               'Search shows if needed. Combined with any advanced IDs; remove a line to stop '
+               'syncing that show.'},
+ {'id': 'series_search',
+  'label': 'Find a show',
+  'type': 'string',
+  'default': '',
+  'placeholder': 'Part of a show title',
+  'help_text': 'Enter part of a title, then run Search shows. Copy the matching title/year into '
+               'Shows to include.'},
  {'id': 'series_whitelist',
-  'label': 'Series Whitelist (Dispatcharr IDs)',
+  'label': 'Series IDs (advanced / existing selections)',
   'type': 'string',
   'default': '',
   'placeholder': '12, 34, 56',
-  'help_text': 'Comma-separated Dispatcharr Series database IDs. Only these series are eligible; '
-               'leave blank to process no series.'},
+  'help_text': 'Optional comma-separated Dispatcharr IDs. Combined with Shows to include; existing '
+               'selections keep working.'},
  {'id': 'generate_series_nfo',
   'label': 'Generate Series NFO Files',
   'type': 'boolean',
@@ -78,7 +93,16 @@ class Plugin:
   'help_text': 'Comma-separated account IDs, highest preference first. Other eligible accounts '
                'follow by relation ID.'}]
 
-    actions = [{'id': 'scan_all_vods',
+    actions = [{'id': 'search_series',
+  'label': 'Search shows',
+  'description': 'Find titles and years in the Dispatcharr catalog without browser developer '
+                 'tools.',
+  'button_label': 'Search'},
+ {'id': 'preview_selection_series',
+  'label': 'Check selected shows',
+  'description': 'Validate titles and show the combined selection without generating files.',
+  'button_label': 'Check'},
+ {'id': 'scan_all_vods',
   'label': 'Scan VOD catalog',
   'description': 'Show available movies and series'},
  {'id': 'initialize_series',
@@ -145,6 +169,8 @@ class Plugin:
         logger.info("=" * 60)
 
         try:
+            if action == "search_series":
+                return self._search_series(settings, logger)
             if action == "scan_all_vods":
                 return self._scan_all_vods(settings, logger)
             if action in {item['id'] for item in self.actions}:
@@ -188,6 +214,72 @@ class Plugin:
             logger.error("Scan failed: %s", e)
             return {"status": "error", "message": f"Scan error: {e}"}
 
+    @staticmethod
+    def _series_label(series):
+        return str(series.name) + (f' ({series.year})' if series.year else '')
+
+    def _search_series(self, settings, logger):
+        from apps.vod.models import Series
+        term = str(settings.get('series_search', '') or '').strip()
+        if len(term) < 2:
+            raise ValueError('Enter at least two characters in Find a show, then run Search shows.')
+        matches = list(Series.objects.filter(name__icontains=term).order_by('name', 'year', 'id')[:21])
+        lines = [f'{self._series_label(show)} — ID {show.id}' for show in matches[:20]]
+        message = '\n'.join(lines) if lines else f'No shows found for {term!r}.'
+        if len(matches) > 20:
+            message += '\nMore matches exist; narrow your search.'
+        if lines:
+            message += '\nCopy a title (including year) into Shows to include, one per line.'
+        logger.info('%s', message)
+        return {'status': 'ok', 'message': message, 'matches': [
+            {'id': show.id, 'title': show.name, 'year': show.year, 'selection': self._series_label(show)}
+            for show in matches[:20]
+        ]}
+
+    def _resolve_series_selection(self, settings, state):
+        """Resolve explicit titles only; previously chosen identities never silently move."""
+        ids = self._parse_series_whitelist(settings.get('series_whitelist', ''))
+        text = settings.get('series_titles', '') or ''
+        if not isinstance(text, str):
+            raise ValueError('Shows to include must contain one title per line')
+        lines = list(dict.fromkeys(line.strip() for line in text.splitlines() if line.strip()))
+        previous = state.get('series_title_selections', {})
+        selected = {}
+        labels = []
+        if lines:
+            from apps.vod.models import Series
+            for line in lines:
+                key = line.casefold()
+                if key in selected:
+                    continue
+                pinned = previous.get(key)
+                if pinned:
+                    matches = list(Series.objects.filter(id=pinned['id'])[:2])
+                    if len(matches) != 1 or str(matches[0].uuid) != pinned['uuid']:
+                        raise ValueError(f'{line!r}: the previously selected show is missing or its identity changed. Review the catalog; no replacement was selected.')
+                else:
+                    # Prefer the literal title, including any parentheses that
+                    # are part of its name, before interpreting a year suffix.
+                    matches = list(Series.objects.filter(name__iexact=line).order_by('id')[:6])
+                    if not matches:
+                        year_match = re.fullmatch(r'(.+?)\s+\((\d{4})\)', line)
+                        if year_match:
+                            matches = list(Series.objects.filter(name__iexact=year_match[1], year=int(year_match[2])).order_by('id')[:6])
+                    if not matches:
+                        raise ValueError(f'No exact show matches {line!r}. Use Find a show / Search shows and copy its title and year. Nothing was selected by partial match.')
+                    if len(matches) != 1:
+                        options = '; '.join(f'{self._series_label(show)} [ID {show.id}]' for show in matches)
+                        raise ValueError(f'{line!r} matches multiple shows: {options}. Include the year; if still ambiguous, use the advanced ID whitelist for this show instead.')
+                show = matches[0]
+                selected[key] = {'id': show.id, 'uuid': str(show.uuid)}
+                if show.id not in ids:
+                    ids.append(show.id)
+                labels.append(self._series_label(show))
+        # Work on the caller's snapshot; read-only actions never persist it.
+        state['series_title_selections'] = selected
+        return ids, labels
+
+
     def _library_action(self, action, settings, logger):
         # Loaded by path because Dispatcharr may load plugin.py outside a package.
         import importlib.util
@@ -209,7 +301,11 @@ class Plugin:
         with module.Library(root, preview=preview, initialize=initialize) as library:
             if initialize:
                 return {'status': 'ok', 'message': 'Library initialized; existing files remain unmanaged'}
-            whitelist = self._parse_series_whitelist(settings.get('series_whitelist', '')) if series_mode else []
+            whitelist, selection_labels = self._resolve_series_selection(settings, library.state) if series_mode else ([], [])
+            if action == 'preview_selection_series':
+                message = 'Selected shows: ' + ('; '.join(selection_labels) if selection_labels else 'none by title')
+                message += '. Combined Dispatcharr IDs: ' + (', '.join(map(str, whitelist)) or 'none')
+                return {'status': 'ok', 'message': message, 'series_ids': whitelist, 'titles': selection_labels}
             if restore:
                 result = library.restore({'series:' + str(i) for i in whitelist} if series_mode else None)
                 return {'status': 'error' if result['conflict'] else 'ok', 'message': 'Recovery complete; existing conflicting files were preserved', **result}
@@ -349,8 +445,8 @@ class Plugin:
                 except Exception as exc:
                     counts['errors'] += 1
                     logger.error('Item reconciliation failed: %s', exc)
-            if total and not adopt:
-                library.checkpoint((start + len(selected)) % total)
+            if not adopt:
+                library.checkpoint((start + len(selected)) % total if total else 0)
             return {'status': 'error' if counts['errors'] or counts['conflict'] else 'ok', 'message': 'Preview complete' if preview else 'Reconciliation complete; automatic orphan removal is disabled', 'counts': counts, 'processed': len(selected), 'total': total, 'missing_series_ids': missing, 'changes': details}
 
     @staticmethod

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-09T00:00:00Z",
+  "generated_at": "2026-09-10T00:00:00Z",
   "manifest": {
     "registry_name": "StreamSieve Plugins",
     "registry_url": "https://github.com/NicholasBoulanger/StreamSieve",
@@ -15,11 +15,11 @@
         "license": "MIT",
         "deprecated": false,
         "repo_url": "https://github.com/NicholasBoulanger/StreamSieve",
-        "latest_version": "1.6.0",
-        "last_updated": "2026-09-09T00:00:00Z",
-        "latest_url": "https://github.com/NicholasBoulanger/StreamSieve/releases/download/v1.6.0/StreamSieve-v1.6.0.zip",
-        "latest_sha256": "fcbc9462fa7cbb12a216e157b33e98ee3fdd13da5c3d9df52c9de6960b08e3b1",
-        "latest_size": 17
+        "latest_version": "1.7.0",
+        "last_updated": "2026-09-10T00:00:00Z",
+        "latest_url": "https://github.com/NicholasBoulanger/StreamSieve/releases/download/v1.7.0/StreamSieve-v1.7.0.zip",
+        "latest_sha256": "6286ba692056d8c8efddf3b3f870f69210fd28357d6ae9055ab158b85b98e849",
+        "latest_size": 20
       }
     ]
   }

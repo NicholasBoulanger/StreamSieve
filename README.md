@@ -1,4 +1,4 @@
-# StreamSieve v1.6.0
+# StreamSieve v1.7.0
 
 StreamSieve generates and reconciles Movies/Series STRM and NFO libraries from Dispatcharr. Jellyfin consumes the folders as normal libraries; no Jellyfin Xtream plugin is needed for generation. Live TV is unaffected.
 
@@ -10,14 +10,36 @@ Add this repository manifest in Dispatcharr's Plugin Hub:
 https://raw.githubusercontent.com/NicholasBoulanger/StreamSieve/main/manifest.json
 ```
 
-Alternatively import the `StreamSieve-v1.6.0.zip` release asset. The archive includes a top-level `streamsieve` folder containing `plugin.py`, `plugin.json`, `reconciliation.py`, and `sync.py`. Do not install only `plugin.py`.
+Alternatively import the `StreamSieve-v1.7.0.zip` release asset. The archive includes a top-level `streamsieve` folder containing `plugin.py`, `plugin.json`, `reconciliation.py`, and `sync.py`. Do not install only `plugin.py`.
 
-**Upgrade change:** generation now requires explicit library initialization. Existing files are unmanaged until adopted. Existing NFOs are preserved; they are not overwritten during adoption.
+**Upgrading from v1.6.0:** existing IDs and initialized libraries keep working. You can add new shows by title without converting your existing whitelist.
+
+**Upgrading from v1.5.x:** generation now requires explicit library initialization. Existing files are unmanaged until adopted. Existing NFOs are preserved; they are not overwritten during adoption.
+
+## Add shows without finding IDs
+
+In StreamSieve settings, enter one title per line in **Shows to include**:
+
+```text
+Severance (2022)
+Breaking Bad (2008)
+The Office (2005)
+```
+
+Use the titles as listed in your Dispatcharr catalog, including any provider prefix. Matching ignores case. Commas inside titles are fine. Click **Check selected shows** to validate, then **Synchronize (series)** as usual. Dispatcharr's action UI saves the current fields before running an action.
+
+If you do not know the catalog's exact title, type part of it in **Find a show** and click **Search shows**. Results appear in the action notification and plugin logs; copy the title/year into the list. Search is read-only and does not need library initialization. It returns at most 20 matches; narrow the search if needed.
+
+Titles resolve to a single show. Remakes require a year; identical title/year entries require the advanced ID field for that one show. Unknown or ambiguous titles stop the action before file changes. Synchronization remembers the ID and UUID so a provider rename does not silently select a different show. If a remembered identity disappears, review the catalog rather than automatically selecting its replacement. To reset a remembered title, remove its line, complete a synchronization, then re-add the intended title.
+
+Existing ID selections remain active. Removing a title stops selecting it only if its ID is not also in the advanced list. Removing a selection preserves generated files. Include `series_titles` in the separate settings JSON if using the scheduled runner.
+
+This works with Dispatcharr's existing text-field UI. A searchable multi-select or an “Add to StreamSieve” button on the VOD page would need additional Dispatcharr frontend integration; this release does not inject UI into that page.
 
 ## First run and migration
 
 1. Mount a persistent parent directory, for example a host media folder at `/VODS`. Pre-create `/VODS/Series` and `/VODS/Movies`. Dispatcharr needs write access to the roots and their parent. Configure Jellyfin to scan the individual media roots, not `/VODS` itself.
-2. Set the Dispatcharr URL to an HTTP(S) address reachable from Jellyfin. Set the series whitelist to Dispatcharr Series database IDs, e.g. `12,34`. Blank means process no series. Movie generation includes all eligible movies.
+2. Set the Dispatcharr URL to an HTTP(S) address reachable from Jellyfin. Add show titles to **Shows to include**, one per line, optionally followed by `(year)`. Existing IDs can remain in **Series IDs (advanced / existing selections)**. Both lists are combined; leaving both blank processes no series. Movie generation includes all eligible movies.
 3. Back up existing library files and Jellyfin data. Stop the previous generator's writes and cleanup before adopting its files.
 4. Run **Initialize** for the desired media type. This writes an ownership index in the sibling `Series.streamsieve-state` or `Movies.streamsieve-state` directory and a `.streamsieve-root` marker inside the media root. Keep both on persistent storage and include both in backups.
 5. For an existing library, run **Preview adoption**, inspect the returned paths/logs, then **Adopt matching legacy STRMs**. Matching requires a unique existing Dispatcharr proxy UUID and the configured URL authority/base path. Arbitrary legacy filenames are retained. Ambiguous mappings are errors. Raw provider URLs, changed UUIDs, different proxy hosts, and layouts without show/season hierarchy require manual migration; they are not guessed from titles. Adoption covers the selected catalog without a batch limit, does not refresh providers, and does not generate missing files.
@@ -57,7 +79,8 @@ Create a persistent JSON settings file, for example:
   "series_root_folder": "/VODS/Series",
   "root_folder": "/VODS/Movies",
   "dispatcharr_url": "http://dispatcharr:9191",
-  "series_whitelist": "12,34",
+  "series_whitelist": "",
+  "series_titles": "Severance (2022)\nBreaking Bad (2008)",
   "series_batch_size": "10",
   "batch_size": "100",
   "generate_series_nfo": true,
@@ -83,4 +106,4 @@ python3 -m unittest discover -s tests -v
 python3 build_release.py
 ```
 
-Tests cover filesystem recovery and mocked Dispatcharr model interactions. Live playback, mounted filesystem semantics, installed Dispatcharr compatibility, and actual Xtream Library migration must be verified in the deployment. The broader roadmap is in `RECONCILIATION_PLAN.md`; v1.6.0 delivers the safe create/update foundation, migration helpers, explicit retirement/recovery, and an external scheduling runner. Completeness-aware automatic pruning, native refresh events, health probing, and Jellyfin scan integration remain future work.
+Tests cover filesystem recovery and mocked Dispatcharr model interactions. Live playback, mounted filesystem semantics, installed Dispatcharr compatibility, and actual Xtream Library migration must be verified in the deployment. The broader roadmap is in `RECONCILIATION_PLAN.md`; v1.6.0 delivered the safe create/update foundation, migration helpers, explicit retirement/recovery, and an external scheduling runner. v1.7.0 adds title-based selection and catalog search. Completeness-aware automatic pruning, native refresh events, health probing, and Jellyfin scan integration remain future work.

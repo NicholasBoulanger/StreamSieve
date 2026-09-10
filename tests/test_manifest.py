@@ -29,15 +29,15 @@ class RepositoryManifestTests(unittest.TestCase):
         entry = manifest["plugins"][0]
         self.assertEqual(entry["slug"], "streamsieve")
         self.assertEqual(entry["name"], "StreamSieve")
-        self.assertEqual(entry["latest_version"], "1.6.0")
+        self.assertEqual(entry["latest_version"], "1.7.0")
         self.assertEqual(
             entry["latest_url"],
             "https://github.com/NicholasBoulanger/StreamSieve/releases/"
-            "download/v1.6.0/StreamSieve-v1.6.0.zip",
+            "download/v1.7.0/StreamSieve-v1.7.0.zip",
         )
 
         release_zip = os.path.join(
-            REPOSITORY_ROOT, "dist", "StreamSieve-v1.6.0.zip"
+            REPOSITORY_ROOT, "dist", "StreamSieve-v1.7.0.zip"
         )
         if os.path.exists(release_zip):
             with open(release_zip, "rb") as handle:

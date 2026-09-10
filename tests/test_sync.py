@@ -12,6 +12,10 @@ class Query(list):
     def select_related(self, *args): return self
     def order_by(self, *args): return self
     def filter(self, **kwargs):
+        if 'name__iexact' in kwargs:
+            return Query(r for r in self if r.name.casefold() == kwargs['name__iexact'].casefold() and ('year' not in kwargs or r.year == kwargs['year']))
+        if 'id' in kwargs:
+            return Query(r for r in self if r.id == kwargs['id'])
         if 'series_id__in' in kwargs:
             return Query(r for r in self if r.series_id in kwargs['series_id__in'])
         if 'episode__series_id' in kwargs:
@@ -29,10 +33,11 @@ class SyncTests(unittest.TestCase):
         self.logger = NS(info=lambda *a: None, error=lambda *a: None)
         self.plugin = Plugin()
         account = NS(id=1, is_active=True)
-        self.shows = [NS(id=i, name='Show ' + str(i), year=2024) for i in (1,2)]
+        self.shows = [NS(id=i, uuid='show-uuid'+str(i), name='Show ' + str(i), year=2024) for i in (1,2)]
         self.relations = Query(NS(id=i, series_id=i, series=s, m3u_account=account, external_series_id=str(i), category=None) for i,s in enumerate(self.shows,1))
         self.episodes = Query(NS(id=i, episode=NS(uuid='uuid'+str(i),series_id=i, name='Pilot',season_number=1,episode_number=1),stream_id=str(i),series_relation_id=i) for i in (1,2))
         models = types.ModuleType('apps.vod.models')
+        models.Series = NS(objects=Query(self.shows))
         models.M3USeriesRelation = NS(objects=self.relations)
         models.M3UEpisodeRelation = NS(objects=self.episodes)
         tasks = types.ModuleType('apps.vod.tasks')
@@ -132,3 +137,36 @@ class SyncTests(unittest.TestCase):
         sources={'s':3}
         self.assertIs(self.plugin._preferred([first,second],{},sources,'s'),first)
         self.assertIs(self.plugin._preferred([first,second],{'account_priority':'1'},sources,'s'),second)
+
+    def test_title_selection_persists_and_syncs_without_ids(self):
+        self.settings['series_whitelist']=''
+        self.settings['series_titles']='Show 1 (2024)'
+        result=self.run_action()
+        self.assertEqual(result['status'],'ok')
+        self.assertEqual(result['processed'],1)
+        with Library(self.root) as library:
+            self.assertEqual(library.state['series_title_selections']['show 1 (2024)']['id'],1)
+        self.shows[0].name='Provider renamed show'
+        result=self.run_action()
+        self.assertEqual(result['status'],'ok')
+        self.assertEqual(result['counts']['unchanged'],1)
+
+    def test_check_selection_is_read_only_and_needs_no_refresh(self):
+        self.settings['series_whitelist']=''
+        self.settings['series_titles']='Show 1 (2024)'
+        before={p:p.stat().st_mtime_ns for p in self.root.parent.rglob('*')}
+        result=self.run_action('preview_selection_series')
+        self.assertEqual(result['series_ids'],[1])
+        after={p:p.stat().st_mtime_ns for p in self.root.parent.rglob('*')}
+        self.assertEqual(before,after)
+        self.assertEqual(self.refreshes,[])
+
+    def test_removing_last_title_clears_pin_without_deleting_media(self):
+        self.settings['series_whitelist']=''
+        self.settings['series_titles']='Show 1 (2024)'
+        self.run_action()
+        self.settings['series_titles']=''
+        self.assertEqual(self.run_action()['status'],'ok')
+        with Library(self.root) as library:
+            self.assertEqual(library.state['series_title_selections'],{})
+        self.assertEqual(len(list(self.root.rglob('*.strm'))),1)

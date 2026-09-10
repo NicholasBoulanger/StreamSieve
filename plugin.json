@@ -1,6 +1,6 @@
 {
   "name": "StreamSieve",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Safely reconcile owned STRM/NFO files with stable paths, previews, and recoverable cleanup.",
   "author": "Nicholas Boulanger / shedunraid",
   "fields": [
@@ -95,12 +95,28 @@
       "help_text": "Unique whitelisted series to refresh and process in this run"
     },
     {
+      "id": "series_titles",
+      "label": "Shows to include",
+      "type": "text",
+      "default": "",
+      "placeholder": "Breaking Bad (2008)\nSeverance (2022)",
+      "help_text": "One exact Dispatcharr show title per line. Add (year) to distinguish remakes. Use Search shows if needed. Combined with any advanced IDs; remove a line to stop syncing that show."
+    },
+    {
+      "id": "series_search",
+      "label": "Find a show",
+      "type": "string",
+      "default": "",
+      "placeholder": "Part of a show title",
+      "help_text": "Enter part of a title, then run Search shows. Copy the matching title/year into Shows to include."
+    },
+    {
       "id": "series_whitelist",
-      "label": "Series Whitelist (Dispatcharr IDs)",
+      "label": "Series IDs (advanced / existing selections)",
       "type": "string",
       "default": "",
       "placeholder": "12, 34, 56",
-      "help_text": "Comma-separated Dispatcharr Series database IDs. Only these series are eligible; leave blank to process no series."
+      "help_text": "Optional comma-separated Dispatcharr IDs. Combined with Shows to include; existing selections keep working."
     },
     {
       "id": "generate_series_nfo",
@@ -118,6 +134,18 @@
     }
   ],
   "actions": [
+    {
+      "id": "search_series",
+      "label": "Search shows",
+      "description": "Find titles and years in the Dispatcharr catalog without browser developer tools.",
+      "button_label": "Search"
+    },
+    {
+      "id": "preview_selection_series",
+      "label": "Check selected shows",
+      "description": "Validate titles and show the combined selection without generating files.",
+      "button_label": "Check"
+    },
     {
       "id": "scan_all_vods",
       "label": "Scan VOD catalog",
